@@ -1,6 +1,11 @@
 // 한국어 문장 도우미
 
+// 숫자·기호를 읽었을 때의 받침 (0 영, 1 일, 3 삼, 6 육, 7 칠, 8 팔은 받침이 있다. ㄹ 받침은 8)
+const DIGIT_JONG: Record<string, number> = { '0': 21, '1': 8, '2': 0, '3': 16, '4': 0, '5': 0, '6': 1, '7': 8, '8': 8, '9': 0, '%': 0 };
+
 function lastJong(word: string): number {
+  const ch = word[word.length - 1];
+  if (ch in DIGIT_JONG) return DIGIT_JONG[ch];
   const c = word.charCodeAt(word.length - 1);
   return c >= 0xac00 && c <= 0xd7a3 ? (c - 0xac00) % 28 : -1; // -1: 한글이 아님
 }

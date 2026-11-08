@@ -5,13 +5,15 @@
  * 인생 자체(Life)는 엔진 객체라 ref 에 두고, 화면에 필요한 것만 state 로 옮겨 그린다.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createLife, type ChoiceView, type Life, type Snapshot, type Summary, type YearResult } from '@/lib/engine';
+import { createLife, type ChoiceView, type Life, type Snapshot, type Stats, type Summary, type YearResult } from '@/lib/engine';
 import { loadPastLives, loadPrefs, savePastLives, savePrefs, type PastLife, type Speed } from '@/lib/storage';
+import { CURRENT_YEAR, MAX_BIRTH_YEAR, MIN_BIRTH_YEAR } from '@/lib/timeline';
 import ChoicePanel from './ChoicePanel';
 import Ending from './Ending';
 import Hud from './Hud';
 import Intro from './Intro';
 import LifeLog, { type YearBlock } from './LifeLog';
+import SidePanel from './SidePanel';
 
 type Phase = 'intro' | 'playing' | 'ending' | 'review';
 
@@ -23,6 +25,9 @@ export default function Game() {
   const [phase, setPhase] = useState<Phase>('intro');
   const [blocks, setBlocks] = useState<YearBlock[]>([]);
   const [snap, setSnap] = useState<Snapshot | null>(null);
+  const snapRef = useRef<Snapshot | null>(null);
+  const [prevStats, setPrevStats] = useState<Stats | null>(null);
+  const [sideOpen, setSideOpen] = useState(false);
   const [choice, setChoice] = useState<ChoiceView | null>(null);
   const [dead, setDead] = useState(false);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -30,18 +35,25 @@ export default function Game() {
   const [paused, setPaused] = useState(false);
   const [auto, setAutoState] = useState(false);
   const [pastLives, setPastLives] = useState<PastLife[]>([]);
+  const [birthYear, setBirthYearState] = useState<number>(CURRENT_YEAR);
 
   // 저장된 설정과 지난 생 불러오기 (브라우저에서만)
   useEffect(() => {
     const prefs = loadPrefs();
     if (prefs.speed && SPEED_MS[prefs.speed]) setSpeedState(prefs.speed);
     if (prefs.auto) setAutoState(true);
+    if (prefs.birthYear && prefs.birthYear >= MIN_BIRTH_YEAR && prefs.birthYear <= MAX_BIRTH_YEAR) setBirthYearState(prefs.birthYear);
     setPastLives(loadPastLives());
   }, []);
 
   const setSpeed = useCallback((s: Speed) => {
     setSpeedState(s);
     savePrefs({ ...loadPrefs(), speed: s });
+  }, []);
+
+  const setBirthYear = useCallback((y: number) => {
+    setBirthYearState(y);
+    savePrefs({ ...loadPrefs(), birthYear: y });
   }, []);
 
   const setAuto = useCallback((v: boolean) => {
@@ -51,6 +63,8 @@ export default function Game() {
 
   // 엔진이 돌려준 한 해 결과를 화면 상태로 옮긴다
   const applyResult = useCallback((res: YearResult) => {
+    setPrevStats(snapRef.current ? snapRef.current.stats : null);
+    snapRef.current = res.snapshot;
     setSnap(res.snapshot);
     if (res.entries.length) {
       setBlocks((prev) => {
@@ -66,8 +80,10 @@ export default function Game() {
   }, []);
 
   const start = useCallback(() => {
-    const life = createLife();
+    const life = createLife({ birthYear });
     lifeRef.current = life;
+    snapRef.current = null;
+    setSideOpen(false);
     setBlocks([]);
     setDead(false);
     setSummary(null);
@@ -76,7 +92,7 @@ export default function Game() {
     setPhase('playing');
     applyResult(life.start());
     window.scrollTo(0, 0);
-  }, [applyResult]);
+  }, [applyResult, birthYear]);
 
   const pick = useCallback(
     (i: number) => {
@@ -111,7 +127,7 @@ export default function Game() {
     const s = lifeRef.current.summary();
     setSummary(s);
     const t = setTimeout(() => {
-      const lives = [{ name: s.name, region: s.region, age: s.age, cause: s.cause, first: s.lines[0], at: Date.now() }, ...loadPastLives()];
+      const lives = [{ name: s.name, region: s.region, age: s.age, cause: s.cause, first: s.lines[0], at: Date.now(), birthYear: s.birthYear }, ...loadPastLives()];
       savePastLives(lives);
       setPastLives(lives);
       setPhase('ending');
@@ -132,6 +148,7 @@ export default function Game() {
     if (phase !== 'playing') return;
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement).tagName === 'INPUT') return;
+      if (e.key === 'Escape') setSideOpen(false);
       if (e.key === ' ') {
         e.preventDefault();
         setPaused((p) => !p);
@@ -149,7 +166,17 @@ export default function Game() {
   }, []);
 
   if (phase === 'intro' || !snap) {
-    return <Intro auto={auto} onAutoChange={setAuto} onStart={start} pastLives={pastLives} onClearPast={clearPast} />;
+    return (
+      <Intro
+        birthYear={birthYear}
+        onBirthYearChange={setBirthYear}
+        auto={auto}
+        onAutoChange={setAuto}
+        onStart={start}
+        pastLives={pastLives}
+        onClearPast={clearPast}
+      />
+    );
   }
 
   if (phase === 'ending' && summary) {
@@ -161,20 +188,46 @@ export default function Game() {
           setPhase('review');
           window.scrollTo(0, 0);
         }}
+        onHome={() => {
+          setPhase('intro');
+          window.scrollTo(0, 0);
+        }}
       />
     );
   }
 
   return (
     <main className="screen game">
-      <Hud snap={snap} speed={speed} paused={paused} showControls={phase === 'playing'} onSpeed={setSpeed} onTogglePause={() => setPaused((p) => !p)} />
-      <LifeLog blocks={blocks} animate={phase === 'playing'} />
-      {phase === 'review' && (
-        <button className="btn btn-primary back-to-end" onClick={() => setPhase('ending')}>
-          마지막 화면으로
-        </button>
-      )}
-      {phase === 'playing' && choice && !dead && <ChoicePanel choice={choice} auto={auto} onPick={pick} onAutoChange={setAuto} />}
+      <Hud
+        snap={snap}
+        prevStats={prevStats}
+        speed={speed}
+        paused={paused}
+        showControls={phase === 'playing'}
+        onSpeed={setSpeed}
+        onTogglePause={() => setPaused((p) => !p)}
+        onOpenSide={() => setSideOpen(true)}
+      />
+      <div className="game-body">
+        <div className="game-main">
+          <LifeLog blocks={blocks} animate={phase === 'playing'} />
+          {phase === 'review' && (
+            <div className="review-actions">
+              <button className="btn btn-primary" onClick={() => setPhase('ending')}>
+                마지막 화면으로
+              </button>
+              <button className="btn" onClick={() => { setPhase('intro'); window.scrollTo(0, 0); }}>
+                처음으로
+              </button>
+            </div>
+          )}
+          {phase === 'playing' && choice && !dead && <ChoicePanel choice={choice} auto={auto} onPick={pick} onAutoChange={setAuto} />}
+        </div>
+        {/* 넓은 화면: 오른쪽 고정 패널 / 휴대폰: '가족·자산' 버튼으로 여는 서랍 */}
+        <div className={`side-wrap${sideOpen ? ' open' : ''}`} onClick={(e) => e.target === e.currentTarget && setSideOpen(false)}>
+          <SidePanel snap={snap} onClose={() => setSideOpen(false)} />
+        </div>
+      </div>
     </main>
   );
 }

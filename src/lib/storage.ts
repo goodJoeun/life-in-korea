@@ -1,8 +1,8 @@
 // 브라우저 저장소. 막혀 있거나(사파리 비공개 모드 등) 비어 있어도 게임은 돌아가게 한다.
 
-export interface PastLife { name: string; region: string; age: number; cause: string; first: string; at: number }
+export interface PastLife { name: string; region: string; age: number; cause: string; first: string; at: number; birthYear?: number }
 export type Speed = 1 | 2 | 4 | 8;
-export interface Prefs { speed?: Speed; auto?: boolean }
+export interface Prefs { speed?: Speed; auto?: boolean; birthYear?: number }
 
 const LIVES_KEY = 'lik.lives.v1';
 const PREFS_KEY = 'lik.prefs.v1';

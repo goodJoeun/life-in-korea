@@ -7,6 +7,7 @@ interface Props {
   summary: Summary;
   onAgain: () => void;
   onReview: () => void;
+  onHome: () => void;
 }
 
 async function copyText(text: string): Promise<boolean> {
@@ -29,7 +30,7 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-export default function Ending({ summary: s, onAgain, onReview }: Props) {
+export default function Ending({ summary: s, onAgain, onReview, onHome }: Props) {
   const [toast, setToast] = useState<string | null>(null);
 
   const stats: [string, string][] = [
@@ -42,7 +43,7 @@ export default function Ending({ summary: s, onAgain, onReview }: Props) {
   ];
 
   async function share() {
-    const text = [...s.lines, '', s.outliveText, '', '너는 5000만 명 중 누구로 태어날까? #5000만분의1', window.location.href.split('#')[0]].join('\n');
+    const text = [...s.lines, '', s.outliveText, '', `너는 ${s.birthYear}년에 누구로 태어날까? #5000만분의1`, window.location.href.split('#')[0]].join('\n');
     const ok = await copyText(text);
     setToast(ok ? '복사했어요. 붙여넣어 공유해 보세요.' : '복사하지 못했어요.');
   }
@@ -71,7 +72,10 @@ export default function Ending({ summary: s, onAgain, onReview }: Props) {
         </dl>
         <div className="end-actions">
           <button className="btn btn-primary" onClick={onAgain}>
-            다시 태어나기
+            {s.birthYear}년에 다시 태어나기
+          </button>
+          <button className="btn" onClick={onHome}>
+            다른 해에 태어나기
           </button>
           <button className="btn" onClick={share}>
             결과 복사하기

@@ -6,12 +6,13 @@
  *   공개 전에 각 항목의 source 를 보고 KOSIS 에서 최신 값으로 교체하세요.
  *   (README.md 의 '데이터 검증 체크리스트' 참고)
  *
+ * 이 파일은 '2024년 기준' 값이다. 연도별로 달라지는 값(출생·사망·진학·결혼·임금·집값 등)은 timeline.ts 에 있다.
  * 단위: 금액은 모두 "만원"(2024년 현재 가치, 물가 상승분 제외), 비율은 0~1.
  */
 export type Sex = 'M' | 'F';
 export type RegionGroup = 'capital' | 'metro' | 'province';
-export type EduTier = 'highschool' | 'college2' | 'local4' | 'capital4' | 'top4';
-export type JobType = 'large' | 'public' | 'sme' | 'contract' | 'professional' | 'self' | 'none';
+export type EduTier = 'elementary' | 'middle' | 'highschool' | 'college2' | 'local4' | 'capital4' | 'top4';
+export type JobType = 'large' | 'public' | 'sme' | 'contract' | 'professional' | 'self' | 'farm' | 'none';
 
 export const KDATA = {
   meta: {
@@ -70,11 +71,11 @@ export const KDATA = {
   // wealth: 분위별 평균 순자산(만원). 출처: 가계금융복지조사(2024 근사)
 
   // ───────────────────────── 사망 ─────────────────────────
-  // Gompertz-Makeham 모형: 연간 위험률 h(x) = (lambda + a·e^(b·x)) × 배수
-  // 계수는 2023 생명표 기대수명(남 80.6, 여 86.4)에 맞춰 보정함 (scripts/simulate.ts 로 검증)
+  // Gompertz-Makeham 모형: 연간 위험률 h(x) = (배경위험 + a·e^(b·x)) × 배수
+  // a 는 해마다 그해 기대수명(timeline.ts)에 맞춰 엔진이 자동으로 보정한다. b 는 나이에 따른 증가 속도.
   mortality: {
-    M: { a: 2.4907e-5, b: 0.095, lambda: 0.0002, infant: 0.0027, e0: 80.6 },
-    F: { a: 6.5993e-6, b: 0.105, lambda: 0.0002, infant: 0.0023, e0: 86.4 },
+    M: { b: 0.095 },
+    F: { b: 0.105 },
     // 소득분위별 위험률 배수 (평균 1.0). 상·하위 20% 기대수명 격차 약 6~7년
     // 출처: 국민건강보험공단 소득분위별 기대수명 연구 (근사)
     quintileMultiplier: [1.32, 1.1, 0.98, 0.87, 0.73],
@@ -97,6 +98,8 @@ export const KDATA = {
   privateTutoring: { participation: 0.80, monthlyPerStudent: 47.4 }, // 2024 초중고 사교육비조사
   collegeEntryRate: 0.73, // 고등학교 졸업자 대학진학률 약 73% (교육기본통계)
   eduTiers: <Record<EduTier, { label: string; years: number }>>{
+    elementary: { label: '초등학교 졸업', years: 0 },
+    middle: { label: '중학교 졸업', years: 0 },
     highschool: { label: '고졸', years: 0 },
     college2: { label: '전문대 졸업', years: 2 },
     local4: { label: '지방 4년제 대학 졸업', years: 4 },
@@ -117,6 +120,7 @@ export const KDATA = {
     contract: { label: '비정규직', startSalary: 2400, growth: 0.01, stability: 0.6 },
     professional: { label: '전문직', startSalary: 7000, growth: 0.04, stability: 0.95 },
     self: { label: '자영업', startSalary: 3200, growth: 0.0, stability: 0.55 },
+    farm: { label: '농림어업', startSalary: 2000, growth: 0.005, stability: 0.85 },
     none: { label: '무직', startSalary: 0, growth: 0, stability: 0 },
   },
   nonRegularShare: 0.382, // 임금근로자 중 비정규직 비중 (2024.8 경제활동인구조사 부가조사)
@@ -141,24 +145,4 @@ export const KDATA = {
   // ───────────────────────── 노후 ─────────────────────────
   pensionMonthly: 65, // 국민연금 노령연금 월평균 수령액 약 65만원
   elderlyPovertyRate: 0.38, // 65세 이상 상대빈곤율 약 38~40%
-};
-
-// 화면에 띄우는 통계 카드. 게임 진행 중 해당 상황에서 한 번씩 노출됨
-export const FACTS: Record<string, string> = {
-  birth: '2023년 한 해 태어난 아이는 약 23만 명, 합계출산율은 0.72명이었다.',
-  region: '출생아 셋 중 하나 가까이는 경기도에서 태어난다.',
-  tutoring: '초중고생 10명 중 8명이 사교육을 받고, 1인당 월평균 사교육비는 약 47만 원이다.',
-  college: '고등학교 졸업자 약 73%가 대학에 진학한다.',
-  military: '대한민국 남성 대부분은 20대 초반에 18개월 안팎의 병역 의무를 진다.',
-  youthJob: '15~29세 청년 고용률은 절반이 안 되는 약 46%다.',
-  nonRegular: '임금근로자 10명 중 4명 가까이가 비정규직이다.',
-  largeVsSme: '대기업 근로자의 월평균 소득(약 591만 원)은 중소기업(약 286만 원)의 두 배를 넘는다.',
-  marriage: '평균 초혼 연령은 남성 33.9세, 여성 31.5세다.',
-  child: '합계출산율 0.72명은 세계에서 가장 낮은 수준이다.',
-  house: '주택을 가진 가구는 전체의 약 56%다.',
-  retire: '가장 오래 다닌 직장을 그만두는 나이는 평균 50대 초반이다.',
-  pension: '국민연금 노령연금 월평균 수령액은 약 65만 원이다.',
-  elderPoverty: '65세 이상 노인 열 명 중 네 명 가까이가 상대적 빈곤 상태다.',
-  cancer: '기대수명까지 산다면 셋 중 한 명 이상은 암을 겪는다.',
-  lifeExp: '2023년 출생아의 기대수명은 남성 80.6세, 여성 86.4세다.',
 };

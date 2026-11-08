@@ -1,6 +1,13 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import { yearPreview } from '@/lib/engine';
 import type { PastLife } from '@/lib/storage';
+import { CURRENT_YEAR, MAX_BIRTH_YEAR, MIN_BIRTH_YEAR } from '@/lib/timeline';
 
 interface Props {
+  birthYear: number;
+  onBirthYearChange: (y: number) => void;
   auto: boolean;
   onAutoChange: (v: boolean) => void;
   onStart: () => void;
@@ -8,26 +15,104 @@ interface Props {
   onClearPast: () => void;
 }
 
-export default function Intro({ auto, onAutoChange, onStart, pastLives, onClearPast }: Props) {
+const QUICK_YEARS = [1965, 1975, 1985, 1995, 2005, 2015];
+
+function YearPicker({ year, onChange }: { year: number; onChange: (y: number) => void }) {
+  const p = yearPreview(year);
+  const set = (y: number) => onChange(Math.max(MIN_BIRTH_YEAR, Math.min(MAX_BIRTH_YEAR, y)));
+  // 직접 입력: 입력 중에는 draft 만 바꾸고, 네 자리가 범위 안이면 바로 반영
+  const [draft, setDraft] = useState(String(year));
+  useEffect(() => setDraft(String(year)), [year]);
+  const n = Number(draft);
+  const invalid = draft.length === 4 && (n < MIN_BIRTH_YEAR || n > MAX_BIRTH_YEAR);
+  const typeYear = (v: string) => {
+    const digits = v.replace(/\D/g, '').slice(0, 4);
+    setDraft(digits);
+    const y = Number(digits);
+    if (digits.length === 4 && y >= MIN_BIRTH_YEAR && y <= MAX_BIRTH_YEAR) onChange(y);
+  };
+  const commit = () => {
+    if (draft.length === 4 && n >= MIN_BIRTH_YEAR && n <= MAX_BIRTH_YEAR) onChange(n);
+    else setDraft(String(year));
+  };
+  return (
+    <section className="year-picker" aria-label="태어날 해">
+      <div className="year-head">
+        <span className="year-label">
+          태어날 해<small>숫자를 눌러 직접 입력</small>
+        </span>
+        <div className="year-stepper">
+          <button className="ctrl" onClick={() => set(year - 1)} aria-label="한 해 전">−</button>
+          <input
+            className={`year-value${invalid ? ' invalid' : ''}`}
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength={4}
+            value={draft}
+            onChange={(e) => typeYear(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+            onFocus={(e) => e.target.select()}
+            onClick={(e) => e.currentTarget.select()}
+            aria-label={`태어날 해 직접 입력 (${MIN_BIRTH_YEAR}~${MAX_BIRTH_YEAR})`}
+          />
+          <button className="ctrl" onClick={() => set(year + 1)} aria-label="한 해 뒤">+</button>
+        </div>
+      </div>
+      <input
+        type="range"
+        min={MIN_BIRTH_YEAR}
+        max={MAX_BIRTH_YEAR}
+        value={year}
+        onChange={(e) => set(Number(e.target.value))}
+        aria-label="태어날 해 고르기"
+      />
+      <div className="year-chips">
+        {QUICK_YEARS.map((y) => (
+          <button key={y} className={`chip${y === year ? ' on' : ''}`} onClick={() => set(y)}>
+            {y}
+          </button>
+        ))}
+        <button className={`chip${year === CURRENT_YEAR ? ' on' : ''}`} onClick={() => set(CURRENT_YEAR)}>
+          지금
+        </button>
+        <button className="chip" onClick={() => set(MIN_BIRTH_YEAR + Math.floor(Math.random() * (MAX_BIRTH_YEAR - MIN_BIRTH_YEAR + 1)))}>
+          무작위
+        </button>
+      </div>
+      {invalid && <p className="year-error">{MIN_BIRTH_YEAR}년부터 {MAX_BIRTH_YEAR}년까지 고를 수 있어요.</p>}
+      <p className="year-preview">
+        이해 출생아 약 <b>{Math.round(p.births / 10000)}만 명</b> · 합계출산율 <b>{p.tfr.toFixed(2)}명</b> · 기대수명 남 <b>{p.e0M.toFixed(1)}세</b>, 여{' '}
+        <b>{p.e0F.toFixed(1)}세</b>
+        {p.estimated && <span className="year-note">{year < 1970 ? '1970년 이전은 추정치입니다.' : '2025년 이후는 추정·전망치입니다.'}</span>}
+      </p>
+    </section>
+  );
+}
+
+export default function Intro({ birthYear, onBirthYearChange, auto, onAutoChange, onStart, pastLives, onClearPast }: Props) {
   return (
     <main className="screen intro">
       <div className="intro-inner">
         <p className="eyebrow">대한민국 인생 시뮬레이션</p>
         <h1 className="title">5000만분의&nbsp;1</h1>
         <p className="lead">
-          오늘도 대한민국 어딘가에서 하루 6백여 명의 아이가 태어납니다.
+          대한민국 어딘가에서 태어난 한 아이가 되어,
           <br />
-          그중 한 아이가 되어, 한 번뿐인 생을 끝까지 살아봅니다.
+          한 번뿐인 생을 끝까지 살아봅니다.
         </p>
         <p className="sub">
-          태어날 지역과 집안 형편은 고를 수 없습니다. 출생·소득·사망 통계가 정합니다.
+          태어날 해를 고르면 그 시대의 출생·진학·결혼·일자리·사망 통계가 해마다 적용됩니다. 지역과 집안 형편은 고를 수 없습니다.
           <br />
           학원, 진로, 결혼, 집 같은 갈림길에서는 직접 고를 수 있지만, 결과는 확률을 따릅니다.
         </p>
 
+        <YearPicker year={birthYear} onChange={onBirthYearChange} />
+
         <div className="intro-actions">
           <button className="btn btn-primary" onClick={onStart}>
-            태어나기
+            {birthYear}년에 태어나기
           </button>
           <label className="toggle">
             <input type="checkbox" checked={auto} onChange={(e) => onAutoChange(e.target.checked)} /> <span>선택도 운에 맡기기</span>
@@ -40,7 +125,8 @@ export default function Intro({ auto, onAutoChange, onStart, pastLives, onClearP
             <ol>
               {pastLives.slice(0, 8).map((l) => (
                 <li key={l.at}>
-                  <strong>{l.name}</strong> · {l.region} · {l.age}세, {l.cause}
+                  <strong>{l.name}</strong> · {l.birthYear ? `${l.birthYear}년생 · ` : ''}
+                  {l.region} · {l.age}세, {l.cause}
                 </li>
               ))}
             </ol>
@@ -53,8 +139,9 @@ export default function Intro({ auto, onAutoChange, onStart, pastLives, onClearP
         <details className="about">
           <summary>이 게임의 숫자에 대해</summary>
           <p>
-            통계청 인구동향조사(출생), 생명표, 사망원인통계, 가계동향조사, 가계금융복지조사, 경제활동인구조사, 일자리행정통계, 교육기본통계, 초중고
-            사교육비조사, 주택소유통계 등 공개 통계를 바탕으로 만든 근사 모형입니다.
+            통계청 인구동향조사(출생), 생명표, 사망원인통계, 장래인구추계, 가계동향조사, 가계금융복지조사, 경제활동인구조사, 교육통계, 혼인통계,
+            병무청 복무기간 등 공개 통계를 바탕으로 만든 근사 모형입니다. 연도 사이의 값은 앞뒤 공표치로 보간했고, 1970년 이전과 2025년 이후는
+            추정·전망치입니다.
           </p>
           <p>금액은 모두 2024년 현재 가치로 계산합니다. 실제 개인의 삶을 예측하지 않으며, 같은 조건이라도 매번 다른 삶이 펼쳐집니다.</p>
           <p>
