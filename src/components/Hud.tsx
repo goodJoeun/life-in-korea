@@ -1,5 +1,6 @@
+import type { Ref } from 'react';
 import type { Snapshot, Stats } from '@/lib/engine';
-import type { Speed } from '@/lib/storage';
+import { YEAR_SECONDS, type YearSeconds } from '@/lib/storage';
 
 const METERS = [
   ['health', '건강'],
@@ -7,17 +8,23 @@ const METERS = [
   ['ability', '역량'],
   ['relation', '관계'],
 ] as const;
-const SPEEDS: Speed[] = [1, 2, 4, 8];
+
+/** 진행 막대가 지금 무엇을 기다리는지 */
+export type ProgressState = 'running' | 'paused' | 'choice' | 'done';
 
 interface Props {
   snap: Snapshot;
   /** 직전 해의 수치 (변화량 표시용) */
   prevStats: Stats | null;
-  speed: Speed;
+  yearSeconds: YearSeconds;
   paused: boolean;
   showControls: boolean;
-  onSpeed: (s: Speed) => void;
+  progress: ProgressState;
+  /** 진행 막대의 채움 요소. 매 프레임 Game 이 직접 너비를 바꾼다(다시 그리기 없이). */
+  barRef: Ref<HTMLElement>;
+  onYearSeconds: (s: YearSeconds) => void;
   onTogglePause: () => void;
+  onSkip: () => void;
   onOpenSide: () => void;
 }
 
@@ -27,7 +34,15 @@ function level(v: number): string {
   return 'mid';
 }
 
-export default function Hud({ snap, prevStats, speed, paused, showControls, onSpeed, onTogglePause, onOpenSide }: Props) {
+const PROGRESS_LABEL: Record<ProgressState, string> = {
+  running: '다음 해까지',
+  paused: '멈춤',
+  choice: '선택을 기다리는 중',
+  done: '',
+};
+
+export default function Hud(props: Props) {
+  const { snap, prevStats, yearSeconds, paused, showControls, progress, barRef } = props;
   return (
     <header className="hud">
       <div className="hud-top">
@@ -37,23 +52,42 @@ export default function Hud({ snap, prevStats, speed, paused, showControls, onSp
           <span className="year">{snap.year}년</span>
         </div>
         <div className="controls" role="group" aria-label="진행">
-          <button className="ctrl side-toggle" onClick={onOpenSide}>
+          <button className="ctrl side-toggle" onClick={props.onOpenSide}>
             가족·자산
           </button>
           {showControls && (
             <>
-              <button className={`ctrl${paused ? ' on' : ''}`} onClick={onTogglePause} aria-label={paused ? '계속' : '일시정지'}>
+              <button className={`ctrl${paused ? ' on' : ''}`} onClick={props.onTogglePause} aria-label={paused ? '계속' : '일시정지'} title="Space">
                 {paused ? '▶' : '❚❚'}
               </button>
-              {SPEEDS.map((s) => (
-                <button key={s} className={`ctrl speed${speed === s ? ' on' : ''}`} onClick={() => onSpeed(s)}>
-                  {s}×
-                </button>
-              ))}
+              <button className="ctrl" onClick={props.onSkip} disabled={progress !== 'running' && progress !== 'paused'} aria-label="바로 다음 해로" title="→">
+                ▶▶
+              </button>
+              <label className="year-len">
+                <span>1년</span>
+                <select value={yearSeconds} onChange={(e) => props.onYearSeconds(Number(e.target.value) as YearSeconds)} aria-label="게임 속 1년의 길이">
+                  {YEAR_SECONDS.map((s) => (
+                    <option key={s} value={s}>
+                      {s}초
+                    </option>
+                  ))}
+                </select>
+              </label>
             </>
           )}
         </div>
       </div>
+
+      {showControls && progress !== 'done' && (
+        <div className={`year-progress ${progress}`} aria-hidden="true">
+          <span className="yp-label">{PROGRESS_LABEL[progress]}</span>
+          <i>
+            <b ref={barRef} />
+          </i>
+          <span className="yp-next">{snap.year + 1}년 · {snap.age + 1}세</span>
+        </div>
+      )}
+
       <div className="stats">
         {METERS.map(([key, label]) => {
           const v = Math.round(snap.stats[key]);

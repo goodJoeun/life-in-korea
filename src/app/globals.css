@@ -284,3 +284,34 @@ button { font: inherit; color: inherit; cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* ───── 1년의 길이 · 진행 막대 ───── */
+.year-length { margin: -8px 0 28px; }
+.year-length .year-label { display: block; font-weight: 600; margin-bottom: 8px; }
+.year-length .year-chips { margin-bottom: 6px; }
+.year-len {
+  display: inline-flex; align-items: center; gap: 4px; margin-left: 2px;
+  border: 1px solid var(--line); border-radius: 8px; padding: 0 2px 0 8px; font-size: 12px; color: var(--ink-3);
+}
+.year-len select {
+  border: 0; background: transparent; font: inherit; font-weight: 600; color: var(--ink);
+  padding: 4px 2px; font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.ctrl:disabled { opacity: .35; cursor: default; }
+.year-progress { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 11.5px; color: var(--ink-3); }
+.year-progress .yp-label { width: 7.5em; flex-shrink: 0; white-space: nowrap; }
+.year-progress .yp-next { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.year-progress i { flex: 1; height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.year-progress b { display: block; height: 100%; background: var(--accent); transform-origin: left; transform: scaleX(0); }
+.year-progress.paused b { background: var(--ink-3); }
+.year-progress.choice b { background: var(--ink-3); opacity: .4; }
+.year-progress.choice .yp-label { color: var(--accent); font-weight: 600; }
+@media (max-width: 420px) {
+  .year-len { padding-left: 6px; }
+  .year-len > span { display: none; }
+  .year-progress .yp-label { width: auto; }
+}
+@media (max-width: 420px) {
+  .who { gap: 6px; }
+  .who .year { display: none; } /* 연도는 진행 막대 오른쪽과 기록에 나온다 */
+}

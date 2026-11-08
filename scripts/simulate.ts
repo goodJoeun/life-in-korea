@@ -11,6 +11,7 @@
 import { createLife } from '../src/lib/engine';
 import { KDATA as D } from '../src/lib/data';
 import { won } from '../src/lib/text';
+import { maleShare, nationalSexRatio, regionBirthWeights } from '../src/lib/births';
 import { at, COLLEGE_RATE, HIGH_SCHOOL_RATE, LIFE_EXPECTANCY, MIDDLE_SCHOOL_RATE, FIRST_MARRIAGE_AGE, CURRENT_YEAR } from '../src/lib/timeline';
 
 function run(birthYear: number, N: number) {
@@ -20,7 +21,7 @@ function run(birthYear: number, N: number) {
     jobAt30: {} as Record<string, number>, jobAt30Count: 0,
     married50: { M: [0, 0], F: [0, 0] }, firstMarriage: { M: [] as number[], F: [] as number[] },
     kidsF45: [] as number[], house50: [0, 0], netWorth60: [] as number[], cancer: 0, health: [] as number[],
-    regions: {} as Record<string, number>, entries: [] as number[], choices: [] as number[],
+    regions: {} as Record<string, number>, male: 0, kidSex: [[0, 0], [0, 0], [0, 0]] as number[][], entries: [] as number[], choices: [] as number[],
   };
   for (let i = 0; i < N; i++) {
     const life = createLife({ seed: i + 1 + birthYear * 100000, birthYear });
@@ -52,7 +53,9 @@ function run(birthYear: number, N: number) {
     if (life.edu) { acc.edu[life.edu] = (acc.edu[life.edu] || 0) + 1; acc.eduCount++; }
     if (life.flags.cancerAge !== undefined) acc.cancer++;
     if (marriedAt !== null) acc.firstMarriage[life.sex].push(marriedAt);
-    acc.regions[life.region.name] = (acc.regions[life.region.name] || 0) + 1;
+    acc.regions[life.region.id] = (acc.regions[life.region.id] || 0) + 1;
+    if (life.sex === 'M') acc.male++;
+    life.children.forEach((c, k) => { const o = Math.min(k, 2); acc.kidSex[o][c.sex === 'M' ? 0 : 1]++; });
     acc.entries.push(entries); acc.choices.push(choices);
   }
   return acc;
@@ -86,8 +89,15 @@ function report(birthYear: number, N: number) {
   row('암 진단 경험', pct(acc.cancer / N));
   row('평균 건강 수치', mean(acc.health).toFixed(1));
   row('기록 수 / 선택 수', `${mean(acc.entries).toFixed(0)}줄 / ${mean(acc.choices).toFixed(1)}번`);
-  const top = Object.entries(acc.regions).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, v]) => `${k} ${pct(v / N)}`).join(', ');
-  row('출생 지역 상위', top);
+  const sr = acc.male / (N - acc.male) * 100;
+  row('출생성비(남/여×100)', sr.toFixed(1), `${birthYear}년 공식 ${nationalSexRatio(birthYear).toFixed(1)} (남아 ${pct(maleShare(nationalSexRatio(birthYear)))})`);
+  const ks = (o: number) => (acc.kidSex[o][0] / (acc.kidSex[o][1] || 1) * 100).toFixed(0);
+  row('자녀 성비 첫/둘/셋째+', `${ks(0)} / ${ks(1)} / ${ks(2)}`, `셋째+ 표본 ${acc.kidSex[2][0] + acc.kidSex[2][1]}명`);
+  const w = regionBirthWeights(birthYear);
+  const name = (id: string) => D.birthsByRegion.find((x) => x.id === id)?.name ?? id;
+  const top = Object.entries(w).sort((a, b) => b[1] - a[1]).slice(0, 5)
+    .map(([k, v]) => `${name(k)} ${pct((acc.regions[k] || 0) / N)}(${pct(v)})`).join(', ');
+  row('출생 지역 상위', top, '괄호 안이 실제 비중');
 }
 
 const arg = process.argv[2];

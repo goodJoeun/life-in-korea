@@ -19,6 +19,7 @@ import {
   CANCERS, DREAMS, JOB_TITLES, MEETING_PLACES, MILITARY_BASES, RANDOM_EVENTS,
   availableIn, stageOf, type Dated, type Effect, type StatKey,
 } from './content';
+import { childSexRatio, isRegionId, maleShare, nationalSexRatio, regionBirthWeights, sexRatio, type RegionId } from './births';
 import { namesFor } from './names';
 import { Rng } from './random';
 import { josa, particle, won } from './text';
@@ -26,7 +27,7 @@ import {
   at, BACKGROUND_HAZARD, BIRTHS, CAREER_BREAK, COLLEGE_RATE, CURRENT_YEAR, FARM_SHARE, FEMALE_SCHOOL_GAP,
   FIRST_MARRIAGE_AGE, HIGH_SCHOOL_RATE, HISTORY, INFANT_MORTALITY, LIFE_EXPECTANCY, MARITAL_FERTILITY,
   EVER_MARRIED, MARRIAGE_SD, MIDDLE_SCHOOL_RATE, NATIONAL_PENSION_START, REAL_HOUSE, REAL_WAGE, TFR, UNEMPLOYMENT,
-  WIFE_WORKS, alternativeServiceName, basicPension, elementaryName, examName, militaryMonths, regionWeights,
+  WIFE_WORKS, alternativeServiceName, basicPension, elementaryName, examName, militaryMonths,
   tutoringBanned, vocationalSchoolName,
 } from './timeline';
 
@@ -148,7 +149,8 @@ export function hazard(sex: Sex, age: number, year: number, mult: number): numbe
 export function cohortSurvival(birthYear: number, age: number): number {
   let total = 0;
   for (const sex of ['M', 'F'] as Sex[]) {
-    const w = sex === 'M' ? D.maleBirthShare : 1 - D.maleBirthShare;
+    const m = maleShare(nationalSexRatio(birthYear));
+    const w = sex === 'M' ? m : 1 - m;
     for (const qm of QM) {
       let S = 1;
       for (let x = 0; x <= age; x++) S *= 1 - hazard(sex, x, birthYear + x, qm);
@@ -254,6 +256,13 @@ export class Life {
         return past
           ? `${y}년 한 해 태어난 아이는 약 ${fmt(at(BIRTHS, y) / 10000, 0)}만 명, 합계출산율은 ${fmt(at(TFR, y), 2)}명이었다.`
           : `${y}년에 태어나는 아이는 약 ${fmt(at(BIRTHS, y) / 10000, 0)}만 명, 합계출산율은 ${fmt(at(TFR, y), 2)}명으로 추정된다.`;
+      case 'sexRatio': {
+        const nat = nationalSexRatio(y);
+        const reg = sexRatio(y, this.region.id as RegionId);
+        if (nat < 108 && Math.abs(reg - nat) < 4) return null;
+        const where = Math.abs(reg - nat) >= 4 ? `${this.region.name}에서는 ${fmt(reg)}명` : null;
+        return `${y}년에는 여자아이 100명이 태어날 때 남자아이가 ${fmt(nat)}명 태어났다${where ? `. ${where}이었다` : ''}.`;
+      }
       case 'region':
         return y >= 2000 ? '출생아 셋 중 하나 가까이는 경기도에서 태어난다.' : null;
       case 'lifeExp':
@@ -307,10 +316,11 @@ export class Life {
   start(): YearResult {
     this.current = { entries: [] };
     const r = this.r;
-    const weights = regionWeights(this.birthYear);
-    this.region = r.weighted(D.birthsByRegion, (x) => weights[x.id] ?? 0);
+    // 그해 시도별 출생아 비중으로 태어날 곳을, 그해 그 시도의 출생성비로 성별을 정한다.
+    const weights = regionBirthWeights(this.birthYear);
+    this.region = r.weighted(D.birthsByRegion, (x) => (isRegionId(x.id) ? weights[x.id] : 0));
     this.residence = { name: this.region.name, group: this.region.group, seoul: this.region.id === 'seoul' };
-    this.sex = r.chance(D.maleBirthShare) ? 'M' : 'F';
+    this.sex = r.chance(maleShare(sexRatio(this.birthYear, this.region.id as RegionId))) ? 'M' : 'F';
     this.quintile = 1 + Math.floor(r.rand() * 5);
     this.surname = r.weighted(D.surnames)[0];
     this.name = this.surname + r.pick(namesFor(this.sex, this.birthYear));
@@ -326,6 +336,7 @@ export class Life {
     const sexWord = this.sex === 'M' ? '남자아이' : '여자아이';
     this.log(`${this.birthYear}년, ${this.region.name}의 ${this.quintileInfo.label} 집에서 ${sexWord}로 태어났다. 이름은 ${this.name}.`, 'milestone');
     this.fact('birth');
+    this.fact('sexRatio');
     if (this.region.id === 'gyeonggi') this.fact('region');
     this.fact('lifeExp');
 
@@ -923,7 +934,10 @@ export class Life {
 
   private haveChild() {
     if (!this.spouse) return;
-    const sex: Sex = this.r.chance(D.maleBirthShare) ? 'M' : 'F';
+    // 그해 출산순위별 출생성비. 1990년대 셋째·넷째는 여아 100명당 남아가 200명을 넘었다.
+    const home = D.birthsByRegion.find((x) => x.name === this.residence.name)?.id;
+    const order = this.children.length + 1;
+    const sex: Sex = this.r.chance(maleShare(childSexRatio(this.year, order, home && isRegionId(home) ? home : undefined))) ? 'M' : 'F';
     const fatherSurname = this.sex === 'M' ? this.surname : this.spouse.name[0];
     const child: Child = { sex, name: fatherSurname + this.r.pick(namesFor(sex, this.year)), bornAge: this.age };
     this.children.push(child);
@@ -1281,7 +1295,8 @@ export function yearPreview(year: number) {
     tfr: at(TFR, year),
     e0M: at(LIFE_EXPECTANCY.M, year),
     e0F: at(LIFE_EXPECTANCY.F, year),
+    sexRatio: nationalSexRatio(year),
     college: at(COLLEGE_RATE, year + 19),
-    estimated: year < 1970 || year >= 2025,
+    estimated: year < 1970 || year > 2025,
   };
 }

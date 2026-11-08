@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { yearPreview } from '@/lib/engine';
-import type { PastLife } from '@/lib/storage';
+import { YEAR_SECONDS, type PastLife, type YearSeconds } from '@/lib/storage';
 import { CURRENT_YEAR, MAX_BIRTH_YEAR, MIN_BIRTH_YEAR } from '@/lib/timeline';
 
 interface Props {
@@ -10,6 +10,8 @@ interface Props {
   onBirthYearChange: (y: number) => void;
   auto: boolean;
   onAutoChange: (v: boolean) => void;
+  yearSeconds: YearSeconds;
+  onYearSecondsChange: (s: YearSeconds) => void;
   onStart: () => void;
   pastLives: PastLife[];
   onClearPast: () => void;
@@ -84,14 +86,14 @@ function YearPicker({ year, onChange }: { year: number; onChange: (y: number) =>
       {invalid && <p className="year-error">{MIN_BIRTH_YEAR}년부터 {MAX_BIRTH_YEAR}년까지 고를 수 있어요.</p>}
       <p className="year-preview">
         이해 출생아 약 <b>{Math.round(p.births / 10000)}만 명</b> · 합계출산율 <b>{p.tfr.toFixed(2)}명</b> · 기대수명 남 <b>{p.e0M.toFixed(1)}세</b>, 여{' '}
-        <b>{p.e0F.toFixed(1)}세</b>
-        {p.estimated && <span className="year-note">{year < 1970 ? '1970년 이전은 추정치입니다.' : '2025년 이후는 추정·전망치입니다.'}</span>}
+        <b>{p.e0F.toFixed(1)}세</b> · 출생성비 <b>{p.sexRatio.toFixed(1)}</b>
+        {p.estimated && <span className="year-note">{year < 1970 ? '1970년 이전은 추정치입니다.' : '2026년 이후는 추정·전망치입니다.'}</span>}
       </p>
     </section>
   );
 }
 
-export default function Intro({ birthYear, onBirthYearChange, auto, onAutoChange, onStart, pastLives, onClearPast }: Props) {
+export default function Intro({ birthYear, onBirthYearChange, auto, onAutoChange, yearSeconds, onYearSecondsChange, onStart, pastLives, onClearPast }: Props) {
   return (
     <main className="screen intro">
       <div className="intro-inner">
@@ -109,6 +111,22 @@ export default function Intro({ birthYear, onBirthYearChange, auto, onAutoChange
         </p>
 
         <YearPicker year={birthYear} onChange={onBirthYearChange} />
+
+        <section className="year-length" aria-label="1년의 길이">
+          <span className="year-label">
+            1년의 길이<small>게임 속 한 해가 몇 초 동안 흐를지</small>
+          </span>
+          <div className="year-chips" role="radiogroup">
+            {YEAR_SECONDS.map((s) => (
+              <button key={s} role="radio" aria-checked={yearSeconds === s} className={`chip${yearSeconds === s ? ' on' : ''}`} onClick={() => onYearSecondsChange(s)}>
+                {s}초
+              </button>
+            ))}
+          </div>
+          <p className="year-note">
+            82년을 살면 길어야 {Math.max(1, Math.round((yearSeconds * 82) / 60))}분쯤 걸립니다(아무 일 없는 해는 건너뜁니다). 게임 중에도 위쪽에서 바꿀 수 있고, Space로 멈추고 →로 바로 다음 해로 넘깁니다.
+          </p>
+        </section>
 
         <div className="intro-actions">
           <button className="btn btn-primary" onClick={onStart}>

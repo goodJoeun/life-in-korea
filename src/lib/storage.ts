@@ -1,8 +1,12 @@
 // 브라우저 저장소. 막혀 있거나(사파리 비공개 모드 등) 비어 있어도 게임은 돌아가게 한다.
 
 export interface PastLife { name: string; region: string; age: number; cause: string; first: string; at: number; birthYear?: number }
-export type Speed = 1 | 2 | 4 | 8;
-export interface Prefs { speed?: Speed; auto?: boolean; birthYear?: number }
+/** 게임 속 1년이 실제로 몇 초인지. 고를 수 있는 값 */
+export const YEAR_SECONDS = [1, 2, 4, 7, 12] as const;
+export type YearSeconds = (typeof YEAR_SECONDS)[number];
+export const DEFAULT_YEAR_SECONDS: YearSeconds = 4;
+export const isYearSeconds = (v: unknown): v is YearSeconds => (YEAR_SECONDS as readonly unknown[]).includes(v);
+export interface Prefs { yearSeconds?: number; auto?: boolean; birthYear?: number }
 
 const LIVES_KEY = 'lik.lives.v1';
 const PREFS_KEY = 'lik.prefs.v1';

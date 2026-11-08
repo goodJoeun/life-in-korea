@@ -6,18 +6,17 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createLife, type ChoiceView, type Life, type Snapshot, type Stats, type Summary, type YearResult } from '@/lib/engine';
-import { loadPastLives, loadPrefs, savePastLives, savePrefs, type PastLife, type Speed } from '@/lib/storage';
+import { DEFAULT_YEAR_SECONDS, isYearSeconds, loadPastLives, loadPrefs, savePastLives, savePrefs, type PastLife, type YearSeconds } from '@/lib/storage';
 import { CURRENT_YEAR, MAX_BIRTH_YEAR, MIN_BIRTH_YEAR } from '@/lib/timeline';
 import ChoicePanel from './ChoicePanel';
 import Ending from './Ending';
-import Hud from './Hud';
+import Hud, { type ProgressState } from './Hud';
 import Intro from './Intro';
 import LifeLog, { type YearBlock } from './LifeLog';
 import SidePanel from './SidePanel';
 
 type Phase = 'intro' | 'playing' | 'ending' | 'review';
 
-const SPEED_MS: Record<Speed, number> = { 1: 2200, 2: 1100, 4: 550, 8: 260 };
 const ENDING_DELAY_MS = 1600;
 
 export default function Game() {
@@ -31,7 +30,7 @@ export default function Game() {
   const [choice, setChoice] = useState<ChoiceView | null>(null);
   const [dead, setDead] = useState(false);
   const [summary, setSummary] = useState<Summary | null>(null);
-  const [speed, setSpeedState] = useState<Speed>(1);
+  const [yearSeconds, setYearSecondsState] = useState<YearSeconds>(DEFAULT_YEAR_SECONDS);
   const [paused, setPaused] = useState(false);
   const [auto, setAutoState] = useState(false);
   const [pastLives, setPastLives] = useState<PastLife[]>([]);
@@ -40,15 +39,15 @@ export default function Game() {
   // 저장된 설정과 지난 생 불러오기 (브라우저에서만)
   useEffect(() => {
     const prefs = loadPrefs();
-    if (prefs.speed && SPEED_MS[prefs.speed]) setSpeedState(prefs.speed);
+    if (isYearSeconds(prefs.yearSeconds)) setYearSecondsState(prefs.yearSeconds);
     if (prefs.auto) setAutoState(true);
     if (prefs.birthYear && prefs.birthYear >= MIN_BIRTH_YEAR && prefs.birthYear <= MAX_BIRTH_YEAR) setBirthYearState(prefs.birthYear);
     setPastLives(loadPastLives());
   }, []);
 
-  const setSpeed = useCallback((s: Speed) => {
-    setSpeedState(s);
-    savePrefs({ ...loadPrefs(), speed: s });
+  const setYearSeconds = useCallback((s: YearSeconds) => {
+    setYearSecondsState(s);
+    savePrefs({ ...loadPrefs(), yearSeconds: s });
   }, []);
 
   const setBirthYear = useCallback((y: number) => {
@@ -103,23 +102,62 @@ export default function Game() {
     [applyResult],
   );
 
-  // 진행 타이머: 한 해가 그려질 때마다(snap 변경) 다음 해를 예약한다
-  useEffect(() => {
+  // 다음 해로 넘기기 (선택이 떠 있으면 자동 선택)
+  const advance = useCallback(() => {
     const life = lifeRef.current;
-    if (phase !== 'playing' || paused || dead || !life) return;
-    if (choice) {
-      if (!auto) return;
-      const t = setTimeout(() => pick(life.autoChoiceIndex()), Math.max(500, SPEED_MS[speed]));
-      return () => clearTimeout(t);
+    if (!life || !life.alive) return;
+    if (life.pending) {
+      pick(life.autoChoiceIndex());
+      return;
     }
-    const t = setTimeout(() => {
-      let res = life.next();
-      // 아무 일도 없던 해는 몰아서 넘긴다
-      for (let guard = 0; !res.entries.length && !res.choice && !res.dead && guard < 3; guard++) res = life.next();
-      applyResult(res);
-    }, SPEED_MS[speed]);
-    return () => clearTimeout(t);
-  }, [phase, paused, dead, choice, auto, speed, snap, pick, applyResult]);
+    let res = life.next();
+    // 아무 일도 없던 해는 몰아서 넘긴다
+    for (let guard = 0; !res.entries.length && !res.choice && !res.dead && guard < 3; guard++) res = life.next();
+    applyResult(res);
+  }, [applyResult, pick]);
+
+  // 진행 타이머. 한 해(1년 = yearSeconds 초)가 흐르는 정도를 progress(0~1)로 쌓고, 다 차면 다음 해로 넘긴다.
+  // 멈추거나 선택을 기다리는 동안에는 쌓지 않아서, 다시 움직이면 멈췄던 자리부터 이어진다.
+  // 막대는 매 프레임 DOM 너비만 바꿔 화면 전체를 다시 그리지 않는다.
+  const progressRef = useRef(0);
+  const barRef = useRef<HTMLElement | null>(null);
+  const waitingChoice = !!choice && !auto;
+  const progressState: ProgressState = phase !== 'playing' || dead ? 'done' : waitingChoice ? 'choice' : paused ? 'paused' : 'running';
+  useEffect(() => {
+    const paint = () => {
+      if (barRef.current) barRef.current.style.transform = `scaleX(${Math.min(1, progressRef.current)})`;
+    };
+    paint();
+    if (progressState !== 'running') return;
+    // 자동 선택은 한 해의 절반만 기다린다 (최소 0.8초)
+    const duration = choice ? Math.max(800, yearSeconds * 500) : yearSeconds * 1000;
+    let raf = 0;
+    let last = performance.now();
+    const loop = (now: number) => {
+      progressRef.current += Math.min(now - last, 250) / duration; // 탭을 다녀오면 한 번에 몰아 넘기지 않는다
+      last = now;
+      paint();
+      if (progressRef.current >= 1) {
+        progressRef.current = 0;
+        advance();
+        return;
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [progressState, choice, yearSeconds, snap, advance]);
+
+  // 새 해가 시작되면 막대를 비운다
+  useEffect(() => {
+    progressRef.current = 0;
+  }, [snap]);
+
+  const skip = useCallback(() => {
+    if (progressState !== 'running' && progressState !== 'paused') return;
+    progressRef.current = 0;
+    advance();
+  }, [progressState, advance]);
 
   // 생이 끝나면 기록을 남기고 잠시 뒤 마지막 화면으로
   useEffect(() => {
@@ -139,26 +177,28 @@ export default function Game() {
   // 새 기록이 생기면 맨 아래로 스크롤
   useEffect(() => {
     if (phase !== 'playing' || !blocks.length) return;
-    const id = requestAnimationFrame(() => window.scrollTo({ top: document.body.scrollHeight, behavior: speed >= 4 ? 'auto' : 'smooth' }));
+    const id = requestAnimationFrame(() => window.scrollTo({ top: document.body.scrollHeight, behavior: yearSeconds <= 1 ? 'auto' : 'smooth' }));
     return () => cancelAnimationFrame(id);
-  }, [blocks, phase, speed]);
+  }, [blocks, phase, yearSeconds]);
 
-  // 키보드: Space 일시정지, 숫자키로 선택
+  // 키보드: Space 일시정지, → 바로 다음 해, 숫자키로 선택
   useEffect(() => {
     if (phase !== 'playing') return;
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement).tagName === 'INPUT') return;
+      if (['INPUT', 'SELECT'].includes((e.target as HTMLElement).tagName)) return;
       if (e.key === 'Escape') setSideOpen(false);
       if (e.key === ' ') {
         e.preventDefault();
         setPaused((p) => !p);
+      } else if (e.key === 'ArrowRight' && !choice) {
+        skip();
       } else if (choice && /^[1-9]$/.test(e.key)) {
         pick(Number(e.key) - 1);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [phase, choice, pick]);
+  }, [phase, choice, pick, skip]);
 
   const clearPast = useCallback(() => {
     savePastLives([]);
@@ -172,6 +212,8 @@ export default function Game() {
         onBirthYearChange={setBirthYear}
         auto={auto}
         onAutoChange={setAuto}
+        yearSeconds={yearSeconds}
+        onYearSecondsChange={setYearSeconds}
         onStart={start}
         pastLives={pastLives}
         onClearPast={clearPast}
@@ -201,11 +243,14 @@ export default function Game() {
       <Hud
         snap={snap}
         prevStats={prevStats}
-        speed={speed}
+        yearSeconds={yearSeconds}
         paused={paused}
         showControls={phase === 'playing'}
-        onSpeed={setSpeed}
+        progress={progressState}
+        barRef={barRef}
+        onYearSeconds={setYearSeconds}
         onTogglePause={() => setPaused((p) => !p)}
+        onSkip={skip}
         onOpenSide={() => setSideOpen(true)}
       />
       <div className="game-body">

@@ -22,7 +22,7 @@ export const KDATA = {
   },
 
   // ───────────────────────── 출생 ─────────────────────────
-  // 시도별 출생아 수(가중치). 출처: 통계청 인구동향조사 출생통계(2023 근사)
+  // 시도 목록. births 는 2023 출생아 수(참고용). 실제 가중치는 출생 연도별로 src/lib/births.ts 에서 정한다.
   birthsByRegion: <{ id: string; name: string; births: number; group: RegionGroup }[]>[
     { id: 'seoul', name: '서울', births: 39500, group: 'capital' },
     { id: 'busan', name: '부산', births: 13100, group: 'metro' },
@@ -44,7 +44,6 @@ export const KDATA = {
   ],
   totalBirths: 230000, // 2023 출생아 약 23만 명
   tfr: 0.72, // 2023 합계출산율
-  maleBirthShare: 0.512, // 출생성비 약 105 (여아 100명당 남아)
 
   // 성씨 분포 (2015 인구주택총조사 근사, 상위 10개 + 기타)
   surnames: <[string, number][]>[
