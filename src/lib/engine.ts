@@ -16,7 +16,7 @@
  */
 import { KDATA as D, type EduTier, type JobType, type RegionGroup, type Sex } from './data';
 import {
-  CANCERS, DREAMS, JOB_TITLES, MEETING_PLACES, MILITARY_BASES, RANDOM_EVENTS,
+  CANCERS, DILEMMAS, DREAMS, JOB_TITLES, LIFE_EVENTS, MEETING_PLACES, MILITARY_BASES, RANDOM_EVENTS, type Dilemma, type RandomEvent,
   availableIn, stageOf, type Dated, type Effect, type StatKey,
 } from './content';
 import { childSexRatio, isRegionId, maleShare, nationalSexRatio, regionBirthWeights, sexRatio, type RegionId } from './births';
@@ -92,6 +92,20 @@ interface Flags {
   declinedMarriage?: number; divorced?: boolean; widowed?: boolean;
   parentHelpUsed?: boolean; parentsGone?: boolean; grandchild?: boolean;
   cancerAge?: number; welfare?: boolean; leftFarm?: boolean; lastDebtCall?: number;
+}
+
+/**
+ * 작은 사건은 거의 해마다 일어나므로(예전엔 두 해에 한 번) 수치 변화는 문장에 적힌 값의 60%만 반영한다.
+ * 그래야 진학·취업·사망률 같은 통계 보정이 그대로 유지된다. 돈(cash)은 그대로.
+ */
+const EVENT_STAT_SCALE = 0.6;
+function scaleFx(fx: Effect, k: number): Effect {
+  const out: Effect = { ...fx };
+  for (const key of ['health', 'happiness', 'ability', 'relation'] as StatKey[]) {
+    const v = fx[key];
+    if (v) out[key] = Math.sign(v) * Math.max(1, Math.round(Math.abs(v) * k));
+  }
+  return out;
 }
 
 // ───────────────────────── 사망률 ─────────────────────────
@@ -359,7 +373,10 @@ export class Life {
     if (!this.pending) this.lifeOpportunities();
     this.career();
     this.familyYear();
-    if (!this.pending && this.r.chance(0.5)) this.randomEvent();
+    // 작은 사건: 거의 해마다 하나, 가끔 둘. 다른 갈림길이 없는 해에는 가끔 작은 갈림길.
+    if (!this.pending && this.age >= 7 && this.r.chance(0.16)) this.randomDilemma();
+    if (!this.pending && this.r.chance(0.85)) this.randomEvent();
+    if (!this.pending && this.r.chance(0.3)) this.randomEvent();
     this.economy();
     this.drift();
     return this.finishYear();
@@ -1167,20 +1184,42 @@ export class Life {
     }
   }
 
-  private randomEvent() {
+  private eventFits(e: { ages?: [number, number]; from?: number; to?: number; when?: (l: Life) => boolean }) {
     const y = this.year;
+    return (e.from ?? -Infinity) <= y && y <= (e.to ?? Infinity) && (!e.ages || (e.ages[0] <= this.age && this.age <= e.ages[1])) && (!e.when || e.when(this));
+  }
+
+  private randomEvent() {
     let stage = stageOf(this.age);
     // 학교를 그만두고 일하는 10대에게는 학교 사건 대신 사회 초년생 사건
     if ((stage === 'middle' && this.edu === 'elementary') || (stage === 'high' && (this.edu === 'elementary' || this.edu === 'middle'))) stage = 'young';
-    const pool = RANDOM_EVENTS[stage].filter(
-      (e) => !this.usedEvents.has(e.text) && (e.from ?? -Infinity) <= y && y <= (e.to ?? Infinity) && (!e.when || e.when(this)) && !(e.fx.cash && !this.independent),
-    );
+    const candidates: RandomEvent[] = this.age >= 19 ? [...RANDOM_EVENTS[stage], ...LIFE_EVENTS] : RANDOM_EVENTS[stage];
+    const pool = candidates.filter((e) => !this.usedEvents.has(e.text) && this.eventFits(e) && !(e.fx.cash && !this.independent));
     if (!pool.length) return;
     const e = this.r.pick(pool);
     this.usedEvents.add(e.text);
     const mood = (e.fx.happiness ?? 0) + (e.fx.health ?? 0);
     this.log(e.text, mood < -3 ? 'bad' : (e.fx.happiness ?? 0) > 3 ? 'good' : 'event');
-    this.apply(e.fx);
+    this.apply(scaleFx(e.fx, EVENT_STAT_SCALE));
+  }
+
+  /** 작은 갈림길: 고른 뒤 결과는 가중치대로 뽑는다. 같은 갈림길은 한 생에 한 번 */
+  private randomDilemma() {
+    const pool = DILEMMAS.filter((d: Dilemma) => !this.usedEvents.has(d.prompt) && this.eventFits(d)
+      && !(d.options.some((o) => o.outcomes.some(([, , fx]) => fx.cash)) && !this.independent));
+    if (!pool.length) return;
+    const d = this.r.pick(pool);
+    this.usedEvents.add(d.prompt);
+    this.ask(d.prompt, d.options.map((o) => ({
+      label: o.label, desc: o.desc, auto: o.auto,
+      run: () => {
+        const [, text, fx] = this.r.weighted(o.outcomes.map((x) => [x, x[0]] as [typeof x, number]))[0];
+        const mood = (fx.happiness ?? 0) + (fx.health ?? 0) + (fx.cash ?? 0) / 500;
+        this.log(text, mood <= -3 ? 'bad' : mood >= 4 ? 'good' : 'event');
+        // 학창 시절 갈림길은 역량을 반만 반영한다 (진학률 보정)
+        this.apply(this.age < 19 && fx.ability ? { ...fx, ability: fx.ability * 0.5 } : fx);
+      },
+    })));
   }
 
   // ───────── 돈 (2024년 현재 가치, 만원) ─────────

@@ -205,3 +205,32 @@ export const maleShare = (ratio: number) => ratio / (ratio + 100);
 export function isRegionId(id: string): id is RegionId {
   return (REGION_IDS as readonly string[]).includes(id);
 }
+
+/**
+ * 그해의 공식 시도 이름. 광역시가 되기 전에는 도 아래 시로, 1995년 전에는 '직할시'로 부른다.
+ * (공식) 부산 1963 직할시 · 대구·인천 1981 · 광주 1986 · 대전 1989 · 1995 광역시로 개칭 · 울산 1997 · 세종 2012
+ *        제주 2006 특별자치도 · 강원 2023 · 전북 2024 특별자치도
+ */
+export function regionFullName(id: RegionId, year: number): string {
+  const metro = (city: string, since: number, before: string) =>
+    year < since ? before : year < 1995 ? `${city}직할시` : `${city}광역시`;
+  switch (id) {
+    case 'seoul': return '서울특별시';
+    case 'busan': return metro('부산', 1963, '경상남도 부산시');
+    case 'daegu': return metro('대구', 1981, '경상북도 대구시');
+    case 'incheon': return metro('인천', 1981, '경기도 인천시');
+    case 'gwangju': return metro('광주', 1986, '전라남도 광주시');
+    case 'daejeon': return metro('대전', 1989, '충청남도 대전시');
+    case 'ulsan': return year < 1997 ? '경상남도 울산' : '울산광역시';
+    case 'sejong': return year < 2012 ? '충청남도 연기군' : '세종특별자치시';
+    case 'gyeonggi': return '경기도';
+    case 'gangwon': return year < 2023 ? '강원도' : '강원특별자치도';
+    case 'chungbuk': return '충청북도';
+    case 'chungnam': return '충청남도';
+    case 'jeonbuk': return year < 2024 ? '전라북도' : '전북특별자치도';
+    case 'jeonnam': return '전라남도';
+    case 'gyeongbuk': return '경상북도';
+    case 'gyeongnam': return '경상남도';
+    case 'jeju': return year < 2006 ? '제주도' : '제주특별자치도';
+  }
+}

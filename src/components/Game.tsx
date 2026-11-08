@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createLife, type ChoiceView, type Life, type Snapshot, type Stats, type Summary, type YearResult } from '@/lib/engine';
 import { DEFAULT_YEAR_SECONDS, isYearSeconds, loadPastLives, loadPrefs, savePastLives, savePrefs, type PastLife, type YearSeconds } from '@/lib/storage';
 import { CURRENT_YEAR, MAX_BIRTH_YEAR, MIN_BIRTH_YEAR } from '@/lib/timeline';
+import BirthMap from './BirthMap';
 import ChoicePanel from './ChoicePanel';
 import Ending from './Ending';
 import Hud, { type ProgressState } from './Hud';
@@ -15,7 +16,7 @@ import Intro from './Intro';
 import LifeLog, { type YearBlock } from './LifeLog';
 import SidePanel from './SidePanel';
 
-type Phase = 'intro' | 'playing' | 'ending' | 'review';
+type Phase = 'intro' | 'birth' | 'playing' | 'ending' | 'review';
 
 const ENDING_DELAY_MS = 1600;
 
@@ -88,10 +89,16 @@ export default function Game() {
     setSummary(null);
     setChoice(null);
     setPaused(false);
-    setPhase('playing');
     applyResult(life.start());
+    // 바로 시작하지 않고, 지도 위에서 태어날 곳을 보여 준 뒤 시작한다
+    setPhase('birth');
     window.scrollTo(0, 0);
   }, [applyResult, birthYear]);
+
+  const beginLife = useCallback(() => {
+    setPhase((p) => (p === 'birth' ? 'playing' : p));
+    window.scrollTo(0, 0);
+  }, []);
 
   const pick = useCallback(
     (i: number) => {
@@ -219,6 +226,10 @@ export default function Game() {
         onClearPast={clearPast}
       />
     );
+  }
+
+  if (phase === 'birth' && lifeRef.current) {
+    return <BirthMap regionId={lifeRef.current.region.id} birthYear={lifeRef.current.birthYear} onDone={beginLife} />;
   }
 
   if (phase === 'ending' && summary) {
