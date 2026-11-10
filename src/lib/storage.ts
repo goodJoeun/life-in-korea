@@ -1,11 +1,25 @@
 // 브라우저 저장소. 막혀 있거나(사파리 비공개 모드 등) 비어 있어도 게임은 돌아가게 한다.
 
 export interface PastLife { name: string; region: string; age: number; cause: string; first: string; at: number; birthYear?: number }
-/** 게임 속 1년이 실제로 몇 초인지. 고를 수 있는 값 */
-export const YEAR_SECONDS = [1, 2, 4, 7, 12] as const;
+/** 게임 속 1년이 실제로 몇 초인지. 게임 중 위쪽에서 고를 수 있는 값 (claude/pacing/SKILL.md) */
+export const YEAR_SECONDS = [2, 4, 6, 10, 15, 20, 30, 45] as const;
 export type YearSeconds = (typeof YEAR_SECONDS)[number];
-export const DEFAULT_YEAR_SECONDS: YearSeconds = 4;
+export const DEFAULT_YEAR_SECONDS: YearSeconds = 15;
 export const isYearSeconds = (v: unknown): v is YearSeconds => (YEAR_SECONDS as readonly unknown[]).includes(v);
+/** 예전에 저장한 값(1·7·12초 등)은 가장 가까운 값으로 바꾼다 */
+export function toYearSeconds(v: unknown): YearSeconds | null {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return null;
+  return YEAR_SECONDS.reduce((best, s) => (Math.abs(s - v) < Math.abs(best - v) ? s : best), YEAR_SECONDS[0]);
+}
+/** 시작 화면에서 고르는 한 생의 길이. 82년 기준, 선택을 기다리는 시간은 빼고 */
+export const LIFE_LENGTHS: { label: string; seconds: YearSeconds }[] = [
+  { label: '빠르게', seconds: 6 },
+  { label: '보통', seconds: 15 },
+  { label: '천천히', seconds: 30 },
+  { label: '아주 천천히', seconds: 45 },
+];
+/** 이보다 짧으면 아무 일 없는 해를 몰아 넘긴다 */
+export const FAST_YEAR_SECONDS = 6;
 export interface Prefs { yearSeconds?: number; auto?: boolean; birthYear?: number }
 
 const LIVES_KEY = 'lik.lives.v1';

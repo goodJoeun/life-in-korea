@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createLife, Life, type ChoiceView, type Snapshot, type Stats, type Summary, type YearResult } from '@/lib/engine';
 import {
-  clearSavedLife, DEFAULT_YEAR_SECONDS, isYearSeconds, loadPastLives, loadPrefs, loadSavedLife, savePastLives, savePrefs, saveLife,
+  clearSavedLife, DEFAULT_YEAR_SECONDS, FAST_YEAR_SECONDS, toYearSeconds, loadPastLives, loadPrefs, loadSavedLife, savePastLives, savePrefs, saveLife,
   type LifeAction, type PastLife, type SavedLife, type YearSeconds,
 } from '@/lib/storage';
 import { replayLife } from '@/lib/replay';
@@ -17,7 +17,7 @@ import ChoicePanel from './ChoicePanel';
 import Ending from './Ending';
 import Hud, { type ProgressState } from './Hud';
 import Intro from './Intro';
-import LifeLog, { type YearBlock } from './LifeLog';
+import LifeLog, { revealDuration, type YearBlock } from './LifeLog';
 import SidePanel from './SidePanel';
 
 type Phase = 'intro' | 'birth' | 'playing' | 'ending' | 'review';
@@ -29,9 +29,9 @@ function mergeBlocks(prev: YearBlock[], res: YearResult): YearBlock[] {
   if (!res.entries.length) return prev;
   if (res.isChoiceResult && prev.length) {
     const last = prev[prev.length - 1];
-    return [...prev.slice(0, -1), { ...last, entries: [...last.entries, ...res.entries] }];
+    return [...prev.slice(0, -1), { ...last, entries: [...last.entries, ...res.entries], staggerFrom: last.entries.length }];
   }
-  return [...prev, { id: prev.length, age: res.age, year: res.year, entries: res.entries }];
+  return [...prev, { id: prev.length, age: res.age, year: res.year, entries: res.entries, staggerFrom: 0 }];
 }
 
 /**
@@ -81,13 +81,16 @@ export default function Game() {
   // 저장된 설정과 지난 생 불러오기 (브라우저에서만)
   useEffect(() => {
     const prefs = loadPrefs();
-    if (isYearSeconds(prefs.yearSeconds)) setYearSecondsState(prefs.yearSeconds);
+    const ys = toYearSeconds(prefs.yearSeconds);
+    if (ys) setYearSecondsState(ys);
     if (prefs.auto) setAutoState(true);
     if (prefs.birthYear && prefs.birthYear >= MIN_BIRTH_YEAR && prefs.birthYear <= MAX_BIRTH_YEAR) setBirthYearState(prefs.birthYear);
     setPastLives(loadPastLives());
     setSaved(loadSavedLife());
   }, []);
 
+  const yearSecondsRef = useRef(yearSeconds);
+  yearSecondsRef.current = yearSeconds;
   const setYearSeconds = useCallback((s: YearSeconds) => {
     setYearSecondsState(s);
     savePrefs({ ...loadPrefs(), yearSeconds: s });
@@ -162,8 +165,8 @@ export default function Game() {
     }
     let res = life.next();
     actionsRef.current.push('n');
-    // 아무 일도 없던 해는 몰아서 넘긴다
-    for (let guard = 0; !res.entries.length && !res.choice && !res.dead && guard < 3; guard++) {
+    // 빠른 모드에서는 아무 일도 없던 해를 몰아서 넘긴다
+    for (let guard = 0; yearSecondsRef.current <= FAST_YEAR_SECONDS && !res.entries.length && !res.choice && !res.dead && guard < 3; guard++) {
       res = life.next();
       actionsRef.current.push('n');
     }
@@ -229,6 +232,9 @@ export default function Game() {
   const progressRef = useRef(0);
   const barRef = useRef<HTMLElement | null>(null);
   const waitingChoice = !!choice && !auto;
+  // 그해 마지막 묶음의 문장이 다 나타나기까지 걸리는 시간. 선택지는 그 뒤에 보인다.
+  const lastBlock = blocks[blocks.length - 1];
+  const revealMs = phase === 'playing' && lastBlock ? revealDuration(yearSeconds, lastBlock.entries.length - (lastBlock.staggerFrom ?? 0)) * 1000 : 0;
   const progressState: ProgressState = phase !== 'playing' || dead ? 'done' : waitingChoice ? 'choice' : paused ? 'paused' : 'running';
   useEffect(() => {
     const paint = () => {
@@ -236,8 +242,8 @@ export default function Game() {
     };
     paint();
     if (progressState !== 'running') return;
-    // 자동 선택은 한 해의 절반만 기다린다 (최소 0.8초)
-    const duration = choice ? Math.max(800, yearSeconds * 500) : yearSeconds * 1000;
+    // 자동 선택은 그해 문장이 다 나온 뒤 잠깐만 기다린다
+    const duration = choice ? revealMs + Math.min(4000, Math.max(800, yearSeconds * 300)) : yearSeconds * 1000;
     let raf = 0;
     let last = performance.now();
     const loop = (now: number) => {
@@ -253,7 +259,7 @@ export default function Game() {
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [progressState, choice, yearSeconds, snap, advance]);
+  }, [progressState, choice, yearSeconds, snap, advance, revealMs]);
 
   // 새 해가 시작되면 막대를 비운다
   useEffect(() => {
@@ -381,7 +387,7 @@ export default function Game() {
       />
       <div className="game-body">
         <div className="game-main">
-          <LifeLog blocks={blocks} animate={phase === 'playing'} />
+          <LifeLog blocks={blocks} animate={phase === 'playing'} yearSeconds={yearSeconds} />
           {phase === 'review' && (
             <div className="review-actions">
               <button className="btn btn-primary" onClick={() => setPhase('ending')}>
@@ -392,7 +398,7 @@ export default function Game() {
               </button>
             </div>
           )}
-          {phase === 'playing' && choice && !dead && <ChoicePanel choice={choice} auto={auto} onPick={pick} onAutoChange={setAuto} />}
+          {phase === 'playing' && choice && !dead && <ChoicePanel choice={choice} auto={auto} onPick={pick} onAutoChange={setAuto} delayMs={revealMs} />}
         </div>
         {/* 넓은 화면: 오른쪽 고정 패널 / 휴대폰: '가족·자산' 버튼으로 여는 서랍 */}
         <div className={`side-wrap${sideOpen ? ' open' : ''}`} onClick={(e) => e.target === e.currentTarget && setSideOpen(false)}>

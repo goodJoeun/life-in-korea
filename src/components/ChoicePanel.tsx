@@ -5,11 +5,13 @@ interface Props {
   auto: boolean;
   onPick: (i: number) => void;
   onAutoChange: (v: boolean) => void;
+  /** 그해 문장이 다 나타난 뒤에 보이도록 기다리는 시간 */
+  delayMs?: number;
 }
 
-export default function ChoicePanel({ choice, auto, onPick, onAutoChange }: Props) {
+export default function ChoicePanel({ choice, auto, onPick, onAutoChange, delayMs = 0 }: Props) {
   return (
-    <div className="choice" role="dialog" aria-label={choice.prompt}>
+    <div className="choice" role="dialog" aria-label={choice.prompt} style={delayMs ? { animationDelay: `${delayMs}ms` } : undefined}>
       <p className="choice-prompt">{choice.prompt}</p>
       <div className="choice-options">
         {choice.options.map((o, i) => (

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { yearPreview } from '@/lib/engine';
-import { YEAR_SECONDS, type PastLife, type SavedLife, type YearSeconds } from '@/lib/storage';
+import { LIFE_LENGTHS, type PastLife, type SavedLife, type YearSeconds } from '@/lib/storage';
 import { CURRENT_YEAR, MAX_BIRTH_YEAR, MIN_BIRTH_YEAR } from '@/lib/timeline';
 import PopulationMap from './PopulationMap';
 
@@ -136,19 +136,22 @@ export default function Intro({ birthYear, onBirthYearChange, auto, onAutoChange
 
           <YearPicker year={birthYear} onChange={onBirthYearChange} />
 
-          <section className="year-length" aria-label="1년의 길이">
+          <section className="year-length" aria-label="한 생의 길이">
             <span className="year-label">
-              1년의 길이<small>게임 속 한 해가 몇 초 동안 흐를지</small>
+              한 생의 길이<small>82년을 산다고 할 때, 선택을 고르는 시간은 빼고</small>
             </span>
-            <div className="year-chips" role="radiogroup">
-              {YEAR_SECONDS.map((s) => (
-                <button key={s} role="radio" aria-checked={yearSeconds === s} className={`chip${yearSeconds === s ? ' on' : ''}`} onClick={() => onYearSecondsChange(s)}>
-                  {s}초
+            <div className="life-lengths" role="radiogroup">
+              {LIFE_LENGTHS.map((l) => (
+                <button key={l.label} role="radio" aria-checked={yearSeconds === l.seconds} className={`life-len${yearSeconds === l.seconds ? ' on' : ''}`} onClick={() => onYearSecondsChange(l.seconds)}>
+                  <b>{l.label}</b>
+                  <span>약 {Math.round((l.seconds * 82) / 60)}분</span>
+                  <small>1년 {l.seconds}초</small>
                 </button>
               ))}
             </div>
             <p className="year-note">
-              82년을 살면 길어야 {Math.max(1, Math.round((yearSeconds * 82) / 60))}분쯤 걸립니다(아무 일 없는 해는 건너뜁니다). 게임 중에도 위쪽에서 바꿀 수 있고, Space로 멈추고 →로 바로 다음 해로 넘깁니다.
+              {LIFE_LENGTHS.some((l) => l.seconds === yearSeconds) ? '' : `지금은 1년 ${yearSeconds}초(약 ${Math.round((yearSeconds * 82) / 60)}분)로 맞춰져 있습니다. `}
+              게임 중에도 위쪽에서 1년 길이를 바꿀 수 있고, Space로 멈추고 →로 바로 다음 해로 넘깁니다.
             </p>
           </section>
 
