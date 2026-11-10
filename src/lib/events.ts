@@ -5,8 +5,10 @@
  * LIFE_EVENTS    어른(19세~)이면 나이대와 상관없이 나올 수 있는 사건. 결혼·자녀·일 같은 형편에 따라 고른다.
  * DILEMMAS       가끔 나오는 작은 갈림길. 고른 뒤 결과는 확률을 따른다.
  *
- * 필드: ages [최소, 최대] 나이 · from/to 달력 연도 · when 형편 조건 · fx 수치 변화 (cash 는 만원, 2024년 가치)
- * 문장은 과거형 일기체로 담담하게. 시대가 있는 문장에는 from/to 를 꼭 붙인다.
+ * 필드: ages [최소, 최대] 나이 · from/to 달력 연도 · born [최소, 최대] 출생연도(세대) · when 형편 조건
+ *       fx 수치 변화 (cash 는 만원, 2024년 가치)
+ * 문장은 과거형 일기체로 담담하게. 시대가 있는 문장에는 from/to 를, 세대가 있는 문장에는 born 을 꼭 붙인다.
+ * (예: 노년에 스마트폰을 처음 배우는 건 1965년생 이전 세대. claude/realism/SKILL.md)
  */
 import type { Effect, Stage } from './content';
 import type { Life } from './engine';
@@ -18,6 +20,8 @@ export interface RandomEvent {
   ages?: [number, number];
   from?: number;
   to?: number;
+  /** 이 출생연도 사이에 태어난 사람에게만 (세대가 있는 문장) */
+  born?: [number, number];
 }
 
 /** 갈림길의 결과 하나: [확률 가중치, 문장, 변화] */
@@ -36,6 +40,7 @@ export interface Dilemma {
   ages: [number, number];
   from?: number;
   to?: number;
+  born?: [number, number];
 }
 
 // ───────── 형편 조건 ─────────
@@ -140,7 +145,7 @@ export const RANDOM_EVENTS: Record<Stage, RandomEvent[]> = {
     { text: '방과 후 돌봄교실에서 부모님을 기다렸다.', fx: { relation: 1 }, from: 2004, ages: [7, 9] },
     { text: '학원 버스를 타고 학원 세 곳을 돌았다.', fx: { ability: 2, happiness: -2 }, from: 2000, when: (s) => s.quintile >= 3 },
     { text: '코로나19로 1년 내내 온라인 수업을 들었다.', fx: { relation: -3, ability: -1 }, from: 2020, to: 2021 },
-    { text: '마인크래프트로 친구들과 마을을 지었다.', fx: { happiness: 3, relation: 2 }, from: 2013 },
+    { text: '마인크래프트로 친구들과 마을을 지었다.', fx: { happiness: 3, relation: 2 }, from: 2013, to: 2035 },
   ],
 
   // ───────── 13~15세 ─────────
@@ -168,7 +173,7 @@ export const RANDOM_EVENTS: Record<Stage, RandomEvent[]> = {
     { text: '라디오 심야 방송에 사연을 보냈다.', fx: { happiness: 2 }, to: 2000 },
     { text: '삐삐를 갖고 싶어 부모님을 졸랐다.', fx: { happiness: 1 }, from: 1993, to: 1999 },
     { text: '좋아하는 아이돌이 생겼다.', fx: { happiness: 4 }, from: 1996 },
-    { text: 'PC방에서 게임하느라 성적이 떨어졌다.', fx: { ability: -3, happiness: 3 }, from: 1998 },
+    { text: 'PC방에서 게임하느라 성적이 떨어졌다.', fx: { ability: -3, happiness: 3 }, from: 1998, to: 2040 },
     { text: '싸이월드 미니홈피를 꾸미는 데 용돈을 다 썼다.', fx: { happiness: 3 }, from: 2001, to: 2010 },
     { text: 'MP3 플레이어에 노래를 가득 채웠다.', fx: { happiness: 3 }, from: 2001, to: 2010 },
     { text: '단톡방에서 친구들과 밤늦게까지 떠들었다.', fx: { relation: 2, health: -1 }, from: 2011 },
@@ -337,9 +342,11 @@ export const RANDOM_EVENTS: Record<Stage, RandomEvent[]> = {
     { text: '자녀의 결혼식을 치렀다.', fx: { happiness: 5, relation: 3, cash: -1500 }, when: childAged(26, 40) },
     { text: '자녀가 취업 준비로 힘들어하는 걸 지켜봤다.', fx: { happiness: -3 }, when: childAged(23, 32), from: 1998 },
     { text: '부모님 산소를 정리했다.', fx: { relation: 1 }, when: (s) => !!s.flags.parentsGone },
-    { text: '트로트 경연 프로그램에 푹 빠졌다.', fx: { happiness: 3 }, from: 2019 },
-    { text: '유튜브로 옛날 노래를 찾아 들었다.', fx: { happiness: 2 }, from: 2013 },
-    { text: '스마트폰 단체 대화방에 아침마다 꽃 사진을 보냈다.', fx: { relation: 2 }, from: 2013 },
+    { text: '트로트 경연 프로그램에 푹 빠졌다.', fx: { happiness: 3 }, from: 2019, to: 2035, born: [1930, 1975] },
+    { text: '유튜브로 옛날 노래를 찾아 들었다.', fx: { happiness: 2 }, from: 2013, to: 2050 },
+    { text: '스마트폰 단체 대화방에 아침마다 꽃 사진을 보냈다.', fx: { relation: 2 }, from: 2013, born: [1930, 1972] },
+    { text: '젊을 때 즐기던 게임을 다시 켜 봤다. 손이 예전 같지 않았다.', fx: { happiness: 2 }, born: [1980, 2100], from: 2035 },
+    { text: '휴대폰 속 수십 년 치 사진을 정리했다.', fx: { happiness: 2 }, born: [1985, 2100], from: 2040 },
     { text: '주말마다 손주를 봐 주었다.', fx: { happiness: 2, health: -2, relation: 2 }, when: (s) => !!s.flags.grandchild },
     { text: '가게를 접을지 오래 고민했다.', fx: { happiness: -3 }, when: selfEmployed },
     { text: '농사일이 해마다 힘에 부쳤다.', fx: { health: -3 }, when: farming },
@@ -353,7 +360,8 @@ export const RANDOM_EVENTS: Record<Stage, RandomEvent[]> = {
     { text: '오랜 친구를 먼저 떠나보냈다.', fx: { happiness: -5 } },
     { text: '손주들이 놀러 와 하루 종일 집이 시끌벅적했다.', fx: { happiness: 6 }, when: (s) => !!s.flags.grandchild },
     { text: '혼자 지내는 시간이 길어졌다.', fx: { happiness: -4 }, when: single },
-    { text: '동네 복지관에서 스마트폰 쓰는 법을 배웠다.', fx: { ability: 2, happiness: 2 }, from: 2012 },
+    { text: '동네 복지관에서 스마트폰 쓰는 법을 배웠다.', fx: { ability: 2, happiness: 2 }, from: 2012, to: 2040, born: [1900, 1965] },
+    { text: '손주에게 새로 나온 기기 쓰는 법을 배웠다.', fx: { relation: 2, ability: 1 }, born: [1966, 2100], when: (s) => !!s.flags.grandchild },
     { text: '자식들이 매달 생활비를 보내 주었다.', fx: { happiness: 2 }, when: (s) => s.children.length > 0, to: 2010 },
     { text: '귀가 어두워져 보청기를 맞췄다.', fx: { health: -1, happiness: 1 }, ages: [75, 120] },
     { text: '계단 오르기가 힘들어졌다.', fx: { health: -2 }, ages: [75, 120] },
@@ -363,7 +371,8 @@ export const RANDOM_EVENTS: Record<Stage, RandomEvent[]> = {
     { text: '자서전을 쓰듯 지난 일을 공책에 적었다.', fx: { happiness: 3, ability: 1 } },
     { text: '노인대학에 다녔다.', fx: { relation: 3, ability: 1 }, from: 1990 },
     { text: '공원 벤치에서 또래 노인들과 장기를 뒀다.', fx: { relation: 2, happiness: 2 } },
-    { text: '키오스크 앞에서 한참을 헤맸다.', fx: { happiness: -2 }, from: 2019 },
+    { text: '키오스크 앞에서 한참을 헤맸다.', fx: { happiness: -2 }, from: 2019, born: [1900, 1965] },
+    { text: '새로 바뀐 은행 앱 화면이 낯설어 한참 들여다봤다.', fx: { happiness: -1 }, born: [1966, 2100], from: 2040 },
     { text: '자식들과 영상통화를 했다.', fx: { happiness: 3, relation: 2 }, from: 2012, when: (s) => s.children.length > 0 },
     { text: '생일에 온 가족이 모였다.', fx: { happiness: 5, relation: 3 }, when: (s) => s.children.length > 0 },
     { text: '명절에도 자식들이 바빠 오지 못했다.', fx: { happiness: -3 }, when: (s) => s.children.length > 0 },
@@ -402,7 +411,7 @@ export const LIFE_EVENTS: RandomEvent[] = [
   // 부모님
   { text: '부모님 환갑잔치를 치렀다.', fx: { relation: 3, cash: -200 }, when: parentsAlive, ages: [28, 40], to: 2005 },
   { text: '부모님 칠순 잔치 대신 가족 여행을 다녀왔다.', fx: { relation: 3, cash: -300 }, when: parentsAlive, ages: [38, 52], from: 2000 },
-  { text: '부모님께 스마트폰 쓰는 법을 몇 번이고 알려 드렸다.', fx: { relation: 2 }, when: parentsAlive, from: 2012, ages: [30, 60] },
+  { text: '부모님께 스마트폰 쓰는 법을 몇 번이고 알려 드렸다.', fx: { relation: 2 }, when: parentsAlive, from: 2012, ages: [30, 60], born: [1950, 1995] },
   { text: '명절에 고향 집에 내려가 부모님 얼굴을 뵀다.', fx: { relation: 2, happiness: 2 }, when: parentsAlive },
   { text: '부모님 집 수리비를 보탰다.', fx: { relation: 2, cash: -300 }, when: and(parentsAlive, working), ages: [35, 60] },
   // 그 밖의 어른 일

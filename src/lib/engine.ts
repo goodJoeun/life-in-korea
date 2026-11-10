@@ -1248,9 +1248,13 @@ export class Life {
     }
   }
 
-  private eventFits(e: { ages?: [number, number]; from?: number; to?: number; when?: (l: Life) => boolean }) {
+  /** 사건이 지금 형편에 맞는지: 달력 연도(from/to), 나이(ages), 세대(born, 출생연도), 형편(when) */
+  private eventFits(e: { ages?: [number, number]; from?: number; to?: number; born?: [number, number]; when?: (l: Life) => boolean }) {
     const y = this.year;
-    return (e.from ?? -Infinity) <= y && y <= (e.to ?? Infinity) && (!e.ages || (e.ages[0] <= this.age && this.age <= e.ages[1])) && (!e.when || e.when(this));
+    return (e.from ?? -Infinity) <= y && y <= (e.to ?? Infinity)
+      && (!e.ages || (e.ages[0] <= this.age && this.age <= e.ages[1]))
+      && (!e.born || (e.born[0] <= this.birthYear && this.birthYear <= e.born[1]))
+      && (!e.when || e.when(this));
   }
 
   private randomEvent() {
