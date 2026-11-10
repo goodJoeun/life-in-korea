@@ -227,6 +227,68 @@ export const PATHS: PathChoice[] = [
     ],
   },
 
+  // ── 돈: 그 시대의 투자 열풍 (claude/money/SKILL.md) ──
+  {
+    id: 'venture-fever', ages: [24, 62], chance: 0.8, from: 1999, to: 2000, when: (l) => l.independent && l.cash > 500 * l.wage,
+    prompt: '벤처 주식 열풍이 불었다. 너도나도 주식 이야기뿐이었다.',
+    options: () => [
+      { label: '모은 돈의 절반을 주식에 넣는다', auto: 1, lean: { bold: 1, biz: 1 }, shape: { traits: { bold: 8, thrift: -3 } }, outcomes: [[1, '증권사 객장에 처음 가 봤다.', { happiness: 2 }]], then: (x) => x.tiltPlan('stock', 50) },
+      { label: '조금만 넣어 본다', auto: 2, outcomes: [[1, '남들 하는 만큼만 주식을 샀다.', {}]], then: (x) => x.tiltPlan('stock', 15) },
+      { label: '예금에 그대로 둔다', auto: 3, lean: { bold: -1, thrift: 1 }, shape: { traits: { bold: -5 } }, outcomes: [[1, '거품이라는 생각이 들어 손대지 않았다.', {}]] },
+    ],
+  },
+  {
+    id: 'fund-fever', ages: [25, 62], chance: 0.6, from: 2006, to: 2007, when: (l) => l.independent && l.cash > 300 * l.wage,
+    prompt: '은행 창구마다 적립식 펀드를 권했다.',
+    options: () => [
+      { label: '펀드에 가입한다', auto: 2, lean: { bold: 1 }, outcomes: [[1, '다달이 펀드에 돈을 넣었다.', {}]], then: (x) => { x.tiltPlan('stock', 20); if (x.year >= 2007) x.tiltPlan('global', 10); } },
+      { label: '적금이 낫다', auto: 3, lean: { thrift: 1 }, outcomes: [[1, '이자는 적어도 원금이 깨지지 않는 게 좋았다.', {}]] },
+    ],
+  },
+  {
+    id: 'ant-fever', ages: [22, 65], chance: 0.6, from: 2020, to: 2021, when: (l) => l.independent && l.cash > 300 * l.wage,
+    prompt: '주변 사람들이 모두 주식 앱을 깔았다.',
+    options: () => [
+      { label: '국내 주식을 산다', auto: 2, lean: { bold: 1 }, shape: { traits: { bold: 4 } }, outcomes: [[1, '점심시간마다 주식 앱을 열어 봤다.', {}]], then: (x) => x.tiltPlan('stock', 25) },
+      { label: '미국 주식 지수에 넣는다', auto: 2, lean: { diligent: 1 }, outcomes: [[1, '미국 주식 지수 펀드에 다달이 넣기로 했다.', {}]], then: (x) => x.tiltPlan('global', 25) },
+      { label: '하지 않는다', auto: 2, lean: { bold: -1 }, outcomes: [[1, '남들이 번다는 이야기를 못 들은 척했다.', {}]] },
+    ],
+  },
+  {
+    id: 'coin-fever', ages: [20, 55], chance: 0.5, from: 2021, to: 2021, when: (l) => l.independent && l.cash > 200 * l.wage,
+    prompt: '코인으로 몇 배를 벌었다는 이야기가 들려왔다.',
+    options: () => [
+      { label: '나도 해 본다', auto: 1, lean: { bold: 1 }, shape: { traits: { bold: 8, thrift: -4 } }, outcomes: [[1, '새벽에도 코인 시세를 들여다봤다.', { health: -1 }]], then: (x) => x.tiltPlan('crypto', 20) },
+      { label: '아주 조금만', auto: 2, outcomes: [[1, '잃어도 괜찮을 만큼만 넣었다.', {}]], then: (x) => x.tiltPlan('crypto', 5) },
+      { label: '거들떠보지 않는다', auto: 3, lean: { bold: -1 }, outcomes: [[1, '실체가 없는 것에는 돈을 넣지 않기로 했다.', {}]] },
+    ],
+  },
+  {
+    id: 'index-fund', ages: [28, 55], chance: 0.15, from: 2027, when: (l) => l.independent && l.riskShare < 0.2 && l.cash > 1000 * l.wage,
+    prompt: '월급만으로는 노후가 막막하다는 생각이 들었다.',
+    options: () => [
+      { label: '주식 지수 펀드에 꾸준히 넣는다', auto: 2, lean: { diligent: 1 }, outcomes: [[1, '국내외 주식 지수에 나눠 넣기 시작했다.', {}]], then: (x) => { x.tiltPlan('stock', 15); x.tiltPlan('global', 20); } },
+      { label: '예금이 마음 편하다', auto: 2, lean: { bold: -1 }, outcomes: [[1, '예금 금리를 비교해 조금 더 주는 곳으로 옮겼다.', {}]] },
+    ],
+  },
+  {
+    id: 'safe-money', ages: [60, 80], chance: 0.5, when: (l) => l.riskShare >= 0.3,
+    prompt: '나이가 들수록 돈을 안전한 곳에 두라는 말을 들었다.',
+    options: () => [
+      { label: '투자를 정리해 예금으로 옮긴다', auto: 3, lean: { bold: -1 }, outcomes: [[1, '투자를 정리하고 예금으로 옮겼다. 마음이 편해졌다.', { happiness: 2 }]], then: (x) => x.safePlan() },
+      { label: '그대로 둔다', auto: 1, lean: { bold: 1 }, outcomes: [[1, '오래 들고 있으면 오른다고 믿었다.', {}]] },
+    ],
+  },
+  {
+    id: 'spend-style', ages: [26, 40], chance: 0.35, when: (l) => l.independent && working(l),
+    prompt: '월급날, 이번 달 돈을 어떻게 쓸지 생각했다.',
+    options: (l) => [
+      { label: '아껴 쓰고 모은다', desc: '소득의 40%를 모은다', auto: 1.5, lean: { thrift: 1 }, shape: { traits: { thrift: 10 } }, outcomes: [[1, '가계부를 쓰기 시작했다.', {}]], then: (x) => x.setSpend('frugal') },
+      { label: '쓸 만큼 쓴다', desc: '소득의 30%를 모은다', auto: 3, outcomes: [[1, l.year >= 2015 ? '모을 만큼 모으고 나머지는 나를 위해 썼다.' : '모을 만큼 모으고 나머지는 생활비로 썼다.', {}]], then: (x) => x.setSpend('normal') },
+      { label: '하고 싶은 건 한다', desc: '소득의 20%를 모은다', auto: 1.5, lean: { thrift: -1 }, shape: { traits: { thrift: -10 } }, outcomes: [[1, '한 번 사는 인생이라고 생각했다.', { happiness: 2 }]], then: (x) => x.setSpend('loose') },
+    ],
+  },
+
   // ── 중년: 자녀와 부모 ──
   {
     id: 'kid-edu', ages: [38, 58], chance: 0.35, when: childAged(10, 17),
