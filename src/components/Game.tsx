@@ -5,7 +5,7 @@
  * 인생 자체(Life)는 엔진 객체라 ref 에 두고, 화면에 필요한 것만 state 로 옮겨 그린다.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createLife, Life, type ChoiceView, type Snapshot, type Stats, type Summary, type YearResult } from '@/lib/engine';
+import { createLife, Life, type ChoiceView, type MoneyPlan, type Snapshot, type Stats, type Summary, type YearResult } from '@/lib/engine';
 import {
   clearSavedLife, DEFAULT_YEAR_SECONDS, FAST_YEAR_SECONDS, toYearSeconds, loadPastLives, loadPrefs, loadSavedLife, savePastLives, savePrefs, saveLife,
   type LifeAction, type PastLife, type SavedLife, type YearSeconds,
@@ -219,6 +219,17 @@ export default function Game() {
     requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
   }, [saved]);
 
+  // 돈 관리 계획 바꾸기: 동작으로 남겨 되살리기에서도 같은 순간에 적용된다
+  const changePlan = useCallback(
+    (plan: MoneyPlan) => {
+      const life = lifeRef.current;
+      if (!life || !life.alive) return;
+      actionsRef.current.push({ p: plan });
+      applyResult(life.setPlan(plan));
+    },
+    [applyResult],
+  );
+
   const discardSaved = useCallback(() => {
     clearSavedLife();
     setSaved(null);
@@ -402,7 +413,7 @@ export default function Game() {
         </div>
         {/* 넓은 화면: 오른쪽 고정 패널 / 휴대폰: '가족·자산' 버튼으로 여는 서랍 */}
         <div className={`side-wrap${sideOpen ? ' open' : ''}`} onClick={(e) => e.target === e.currentTarget && setSideOpen(false)}>
-          <SidePanel snap={snap} onClose={() => setSideOpen(false)} />
+          <SidePanel snap={snap} onClose={() => setSideOpen(false)} onPlan={phase === 'playing' && !dead ? changePlan : undefined} />
         </div>
       </div>
     </main>

@@ -1,4 +1,5 @@
-import type { Snapshot } from '@/lib/engine';
+import type { MoneyPlan, Snapshot } from '@/lib/engine';
+import MoneyPanel from './MoneyPanel';
 import { TRAITS, type TraitKey } from '@/lib/content';
 import { won } from '@/lib/text';
 
@@ -6,6 +7,8 @@ interface Props {
   snap: Snapshot;
   /** 휴대폰에서 서랍처럼 열렸을 때 닫기 */
   onClose?: () => void;
+  /** 돈 관리 계획 바꾸기 (게임 중에만) */
+  onPlan?: (plan: MoneyPlan) => void;
 }
 
 const SPOUSE_STATUS = { married: '', widowed: '사별', divorced: '이혼' } as const;
@@ -19,7 +22,7 @@ function Row({ label, value, tone }: { label: string; value: string; tone?: 'plu
   );
 }
 
-export default function SidePanel({ snap, onClose }: Props) {
+export default function SidePanel({ snap, onClose, onPlan }: Props) {
   const { family: f, assets: a } = snap;
   const spouseWord = f.spouse ? (snap.sex === 'M' ? '아내' : '남편') : '배우자';
   const income = a ? a.income.self + a.income.spouse + a.income.pension : 0;
@@ -77,8 +80,8 @@ export default function SidePanel({ snap, onClose }: Props) {
               <span>순자산</span>
               {won(a.netWorth)}
             </p>
+            <MoneyPanel snap={snap} assets={a} onPlan={onPlan} />
             <dl>
-              <Row label={a.cash >= 0 ? '예금' : '빚'} value={won(Math.abs(a.cash))} tone={a.cash >= 0 ? undefined : 'minus'} />
               <Row label="집" value={a.house ? `자가 · ${won(a.house.price)}` : snap.age >= 25 ? '전·월세' : '—'} />
               {a.house && a.house.debt > 0 && <Row label="주택 대출" value={won(a.house.debt)} tone="minus" />}
             </dl>
