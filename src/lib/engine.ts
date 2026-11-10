@@ -253,6 +253,9 @@ function normCdf(z: number): number {
   return z > 0 ? 1 - p : p;
 }
 
+/** 나이가 들수록 이혼은 드물어진다 (황혼 이혼은 있지만 75세 넘어서는 거의 없다) (추정) */
+const divorceByAge = (age: number) => (age < 55 ? 1 : age < 65 ? 0.6 : age < 75 ? 0.3 : 0.05);
+
 const eduName = (t: EduTier) => D.eduTiers[t].label.replace(' 졸업', '');
 const fmt = (n: number, d = 1) => (Math.round(n * 10 ** d) / 10 ** d).toLocaleString('ko-KR');
 const pct = (r: number) => Math.round(r * 100);
@@ -1275,7 +1278,8 @@ export class Life {
     const price = base * this.houseIndex();
     // 2000년 이전에는 주택담보대출이 드물어 목돈이 더 필요했다
     // 대신 전세를 끼고 사는 경우가 많았다
-    const downShare = this.year < 2000 ? 0.4 : 1 - D.mortgageLTV;
+    // 55세가 넘으면 오래 갚는 대출을 받기 어려워 목돈이 더 필요하다 (추정)
+    const downShare = Math.max(this.year < 2000 ? 0.4 : 1 - D.mortgageLTV, this.age >= 55 ? 0.6 : 0);
     const help = !this.flags.parentHelpUsed && this.quintile >= 4 ? [0, 0, 0, 5000, 18000][this.quintile - 1] * this.wage : 0;
     if (this.cash + help < price * downShare || !this.r.chance(0.4)) return false;
     this.ask(`${this.residence.name}에 마음에 드는 집이 나왔다. (지금 돈으로 ${won(price)})`, [
@@ -1401,7 +1405,7 @@ export class Life {
 
   private mainRetire() {
     const j = this.job!;
-    this.log(j.type === 'farm' ? '평생 지은 농사를 그만뒀다.' : `오래 다닌 직장을 떠났다. (${j.title})`, 'milestone');
+    this.log(j.type === 'farm' ? '평생 지은 농사를 그만뒀다.' : j.type === 'contract' ? `오래 해 온 ${j.title} 일을 그만뒀다.` : `오래 다닌 직장을 떠났다. (${j.title})`, 'milestone');
     if (j.type !== 'farm') this.fact('retire');
     this.cash += j.base * this.wage * (j.type === 'large' || j.type === 'public' ? 1.2 : j.type === 'farm' ? 0 : 0.8); // 퇴직금
     this.job = { type: 'none', title: '은퇴', base: 0, main: false };
@@ -1449,7 +1453,7 @@ export class Life {
         this.married = false;
         f.widowed = true;
         this.apply({ happiness: -20, health: -5 });
-      } else if (r.chance(D.marriage.annualDivorceRate * (this.year < 1995 ? 0.35 : 1) * (this.stats.happiness < 40 ? 2.5 : 1))) {
+      } else if (r.chance(D.marriage.annualDivorceRate * (this.year < 1995 ? 0.35 : 1) * (this.stats.happiness < 40 ? 2.5 : 1) * divorceByAge(a))) {
         this.log(`${josa(this.spouse.name, '과/와')} 이혼했다.`, 'bad');
         this.married = false;
         f.divorced = true;
@@ -1626,7 +1630,7 @@ export class Life {
     const series: LifePoint[] = [...byAge.values()].map((h) => ({
       age: h.age, year: h.year, netWorth: h.snapshot.netWorth, happiness: Math.round(h.snapshot.stats.happiness), health: Math.round(h.snapshot.stats.health),
     }));
-    const MOMENTS: [RegExp, string][] = [[/일을 시작했다|살기 시작했다|이\/가 됐다$|사장이 됐다|주인이 됐다/, '첫 일'], [/결혼했다\./, '결혼'], [/^첫째 (아들|딸)/, '첫 아이'], [/내 집을 마련했다/, '내 집'], [/오래 다닌 직장을 떠났다|평생 지은 농사를 그만뒀다/, '은퇴']];
+    const MOMENTS: [RegExp, string][] = [[/일을 시작했다|살기 시작했다|이\/가 됐다$|사장이 됐다|주인이 됐다/, '첫 일'], [/결혼했다\./, '결혼'], [/^첫째 (아들|딸)/, '첫 아이'], [/내 집을 마련했다/, '내 집'], [/오래 다닌 직장을 떠났다|오래 해 온 .* 일을 그만뒀다|평생 지은 농사를 그만뒀다/, '은퇴']];
     const moments: { age: number; label: string }[] = [];
     for (const h of this.history) for (const e of h.entries) {
       if (e.kind !== 'milestone') continue;

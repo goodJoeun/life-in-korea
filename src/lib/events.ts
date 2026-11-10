@@ -409,7 +409,7 @@ export const LIFE_EVENTS: RandomEvent[] = [
   // 부모님
   { text: '부모님 환갑잔치를 치렀다.', fx: { relation: 3, cash: -200 }, when: parentsAlive, ages: [28, 40], to: 2005 },
   { text: '부모님 칠순 잔치 대신 가족 여행을 다녀왔다.', fx: { relation: 3, cash: -300 }, when: parentsAlive, ages: [38, 52], from: 2000 },
-  { text: '부모님께 스마트폰 쓰는 법을 몇 번이고 알려 드렸다.', fx: { relation: 2 }, when: parentsAlive, from: 2012, ages: [30, 60], born: [1950, 1995] },
+  { text: '부모님께 스마트폰 쓰는 법을 몇 번이고 알려 드렸다.', fx: { relation: 2 }, when: parentsAlive, from: 2012, to: 2035, ages: [30, 60], born: [1950, 1995] },
   { text: '명절에 고향 집에 내려가 부모님 얼굴을 뵀다.', fx: { relation: 2, happiness: 2 }, when: parentsAlive },
   { text: '부모님 집 수리비를 보탰다.', fx: { relation: 2, cash: -300 }, when: and(parentsAlive, working), ages: [35, 60] },
   // 그 밖의 어른 일
