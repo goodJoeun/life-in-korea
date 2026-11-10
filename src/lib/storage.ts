@@ -37,8 +37,8 @@ export const savePrefs = (p: Prefs) => save(PREFS_KEY, p);
 // 엔진은 씨앗값이 같으면 똑같이 흘러가므로, 씨앗값과 지금까지의 동작만 남겼다가 다시 돌려 되살린다.
 // (갈림길 선택지에는 함수가 들어 있어 인생 객체를 그대로 저장할 수 없다)
 
-/** n: 다음 해 · a: 운에 맡긴 선택(난수를 쓴다) · 숫자: 직접 고른 선택지 */
-export type LifeAction = 'n' | 'a' | number;
+import type { LifeAction } from './replay';
+export type { LifeAction };
 export interface SavedLife {
   v: 1; seed: number; birthYear: number; actions: LifeAction[];
   /** 시작 화면에 보여 줄 요약 */

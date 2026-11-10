@@ -10,6 +10,7 @@ import {
   clearSavedLife, DEFAULT_YEAR_SECONDS, isYearSeconds, loadPastLives, loadPrefs, loadSavedLife, savePastLives, savePrefs, saveLife,
   type LifeAction, type PastLife, type SavedLife, type YearSeconds,
 } from '@/lib/storage';
+import { replayLife } from '@/lib/replay';
 import { CURRENT_YEAR, MAX_BIRTH_YEAR, MIN_BIRTH_YEAR } from '@/lib/timeline';
 import BirthMap from './BirthMap';
 import ChoicePanel from './ChoicePanel';
@@ -34,25 +35,13 @@ function mergeBlocks(prev: YearBlock[], res: YearResult): YearBlock[] {
 }
 
 /**
- * 저장된 생을 같은 씨앗값으로 처음부터 다시 돌려 되살린다.
+ * 저장된 생을 같은 씨앗값으로 처음부터 다시 돌려 되살린다 (lib/replay).
  * 엔진 코드가 바뀌어 동작이 맞지 않게 되면(선택지가 없는데 선택 등) 거기서 멈춘다.
  */
 function replay(saved: SavedLife) {
-  const life = createLife({ seed: saved.seed, birthYear: saved.birthYear });
-  let res = life.start();
-  let blocks = mergeBlocks([], res);
-  let prev: Snapshot | null = null;
-  const actions: LifeAction[] = [];
-  for (const a of saved.actions) {
-    if (!life.alive) break;
-    const p = life.pending;
-    if (a === 'n' ? p : !p || (typeof a === 'number' && (a < 0 || a >= p.options.length))) break;
-    prev = res.snapshot;
-    res = a === 'n' ? life.next() : life.choose(a === 'a' ? life.autoChoiceIndex() : a);
-    blocks = mergeBlocks(blocks, res);
-    actions.push(a);
-  }
-  return { life, res, blocks, prev, actions };
+  let blocks: YearBlock[] = [];
+  const r = replayLife(saved.seed, saved.birthYear, saved.actions, (res) => (blocks = mergeBlocks(blocks, res)));
+  return { life: r.life, res: r.res, blocks, prev: r.prev ? r.prev.snapshot : null, actions: r.actions };
 }
 
 export default function Game() {
