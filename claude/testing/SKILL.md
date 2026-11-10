@@ -15,6 +15,7 @@ description: 5000만분의 1 테스트 방법. 엔진·사건·화면을 고친 
 - **시대 검사**: 기록에 나온 문장이 시대·세대에 맞는지. `realism` SKILL 의 금지 규칙을 코드로 확인한다
   (예: 1980년 이후 출생자가 노년에 스마트폰 쓰는 법을 배우지 않는다, 삐삐는 1993~1999년에만).
 - **수치 범위**: 상태 수치 0~100, 돈이 NaN·Infinity 가 아님.
+- **돈 관리**: 무작위 플레이어가 가끔 계획을 바꾼다(`{ p }` 동작). 예금 + 투자 = 쓸 수 있는 돈인지.
 - **문장 점검**: 조사 실패 흔적(`이(가)`, `을(를)`), `undefined`, `NaN` 이 기록에 없는지.
 
 새 기능을 넣으면 그 기능의 불변 조건을 여기에 추가한다.
@@ -35,7 +36,9 @@ EDGE="/c/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"
   --virtual-time-budget=8000 --screenshot="<스크래치>/shot.png" http://localhost:3000/
 ```
 
-- Edge 창 최소 폭은 약 500px. 휴대폰 폭은 520px 로 찍는다.
+- 버튼을 눌러야 보이는 화면은 `node scripts/shot.mjs <url> <png> [너비] [높이] [버튼 글자...]` (CDP 로 클릭 후 전체 페이지).
+  이 도구는 너비를 직접 지정하므로 390px 휴대폰 폭도 찍힌다.
+- `--screenshot` 방식은 Edge 창 최소 폭(약 500px) 때문에 휴대폰 폭이 실제보다 넓게 그려진다.
 - 게임 중간 화면은 클릭이 필요하므로, 확인용 임시 페이지(`src/app/preview-*/page.tsx`)를 만들어 찍고 **꼭 지운다**.
 - 개발 오버레이 오류는 `POST http://localhost:3000/_next/mcp` (`get_errors`) 로 확인한다.
 
