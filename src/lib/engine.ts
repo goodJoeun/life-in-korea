@@ -16,9 +16,11 @@
  */
 import { KDATA as D, type EduTier, type JobType, type RegionGroup, type Sex } from './data';
 import {
-  CANCERS, DILEMMAS, DREAMS, JOB_TITLES, LIFE_EVENTS, MEETING_PLACES, MILITARY_BASES, RANDOM_EVENTS, type Dilemma, type RandomEvent,
-  availableIn, stageOf, type Dated, type Effect, type StatKey,
+  CANCERS, DILEMMAS, DREAMS, INTEREST_CERTS, INTEREST_DREAMS, INTEREST_LATE_JOBS, INTEREST_TITLES, INTERESTS, JOB_TITLES, LIFE_EVENTS,
+  MEETING_PLACES, MILITARY_BASES, RANDOM_EVENTS, TRAITS, type Dilemma, type RandomEvent,
+  availableIn, stageOf, type Dated, type Effect, type InterestKey, type StatKey, type TraitKey,
 } from './content';
+import { PATHS, type PathChoice, type PathOption } from './paths';
 import { childSexRatio, isRegionId, maleShare, nationalSexRatio, regionBirthWeights, sexRatio, type RegionId } from './births';
 import { namesFor } from './names';
 import { Rng } from './random';
@@ -66,7 +68,15 @@ export interface Snapshot {
   family: FamilyView;
   /** 독립하기 전(부모님과 사는 동안)에는 null */
   assets: AssetView | null;
+  /** 성향 -100~100 */
+  traits: Record<TraitKey, number>;
+  /** 가장 큰 관심 분야 이름 (아직 없으면 null) */
+  interest: string | null;
+  major: string | null;
 }
+/** 직접 고른 선택 하나 (결과 리포트의 '인생의 갈림길') */
+export interface TurningPoint { age: number; year: number; prompt: string; label: string; kind: ChoiceKind }
+export type ChoiceKind = 'core' | 'path' | 'dilemma';
 export interface YearResult {
   age: number; year: number; entries: Entry[];
   choice: ChoiceView | null; dead: boolean; isChoiceResult: boolean; snapshot: Snapshot;
@@ -78,6 +88,9 @@ export interface Summary {
   netWorth: number | null; netWorthText: string | null;
   children: number; married: boolean;
   lines: string[]; outliveText: string; outlivePercent: number;
+  traits: Record<TraitKey, number>; interest: string | null; major: string | null;
+  /** 스스로 고른 선택(운에 맡긴 것 제외) */
+  turningPoints: TurningPoint[];
 }
 export interface LifeOptions { seed?: number; birthYear?: number }
 
@@ -99,6 +112,7 @@ interface Flags {
   declinedMarriage?: number; divorced?: boolean; widowed?: boolean;
   parentHelpUsed?: boolean; parentsGone?: boolean; grandchild?: boolean;
   cancerAge?: number; welfare?: boolean; leftFarm?: boolean; lastDebtCall?: number;
+  track?: 'science' | 'humanities' | 'arts'; retirePlan?: 'save' | 'work' | 'farm'; grandCareAsked?: boolean;
 }
 
 /**
@@ -223,8 +237,10 @@ export class Life {
   private r: Rng;
   age = 0;
   alive = true;
-  pending: { prompt: string; options: Option[] } | null = null;
+  pending: { prompt: string; options: Option[]; kind: ChoiceKind } | null = null;
   history: YearResult[] = [];
+  /** 바로 다음 choose() 가 운에 맡긴 선택인지 */
+  private autoPicking = false;
   private current: { entries: Entry[] } = { entries: [] };
   private shownFacts = new Set<string>();
   private usedEvents = new Set<string>();
@@ -252,6 +268,13 @@ export class Life {
   house: House | null = null;
   pensionBase = 0;
   deathCause = '';
+  /** 성향 -100~100 (claude/paths/SKILL.md) */
+  traits: Record<TraitKey, number> = { bold: 0, social: 0, diligent: 0, thrift: 0 };
+  /** 관심 분야 점수. 쌓이기만 한다 */
+  interests: Record<InterestKey, number> = { science: 0, words: 0, art: 0, sport: 0, tech: 0, care: 0, biz: 0, nature: 0 };
+  major: string | null = null;
+  /** 고른 선택의 기록 */
+  choiceLog: (TurningPoint & { auto: boolean })[] = [];
 
   constructor(opts: LifeOptions = {}) {
     this.seed = (opts.seed === undefined ? Math.floor(Math.random() * 2 ** 32) : opts.seed) >>> 0;
@@ -285,9 +308,77 @@ export class Life {
     }
     if (fx.cash) this.cash += fx.cash * this.wage;
   }
-  private ask(prompt: string, options: Option[]) {
-    this.pending = { prompt, options };
+  private ask(prompt: string, options: Option[], kind: ChoiceKind = 'core') {
+    this.pending = { prompt, options, kind };
     this.log(prompt, 'choice');
+  }
+
+  // ───────── 성향·관심 분야 (갈림길 paths.ts 가 쓴다) ─────────
+  trait(k: TraitKey) { return this.traits[k]; }
+  /** 가장 큰 관심 분야 (5점 이상일 때) */
+  mainInterest(): InterestKey | null {
+    const [k, v] = (Object.entries(this.interests) as [InterestKey, number][]).sort((a, b) => b[1] - a[1])[0];
+    return v >= 5 ? k : null;
+  }
+  /** 관심 분야 상위 n개 (같으면 정해진 순서) */
+  topInterests(n: number): InterestKey[] {
+    return (Object.entries(this.interests) as [InterestKey, number][]).sort((a, b) => b[1] - a[1]).slice(0, n).map(([k]) => k);
+  }
+  pickFrom<T>(list: readonly T[]): T { return this.r.pick(list); }
+  /** 관심 분야에 맞는 꿈 하나 */
+  interestDream(): string {
+    const k = this.mainInterest();
+    return k ? this.r.pick(this.titles(INTEREST_DREAMS[k])) : this.dream;
+  }
+  setDream(d: string) { this.dream = d; }
+  certName(): string {
+    const k = this.mainInterest();
+    const list = k ? this.titles(INTEREST_CERTS[k]) : [];
+    return list.length ? this.r.pick(list) : this.year >= 1997 ? '컴퓨터활용능력' : '정보처리기능사';
+  }
+  /** 연봉을 p만큼 올린다 (이직·대학원 등) */
+  raise(p: number) { if (this.job && this.job.base > 0) this.job.base *= 1 + p; }
+  /** 갈림길에서 새 일을 시작한다 */
+  beginJob(type: Exclude<JobType, 'none'>, main: boolean, titles?: Dated[]) { this.startJob(type, main, titles); }
+
+  /** 성향 방향으로 '운에 맡기기' 가중치를 바꾼다 */
+  private leanWeight(o: PathOption): number {
+    let w = o.auto;
+    for (const [k, v] of Object.entries(o.lean ?? {}) as [string, number][]) {
+      const x = k in this.traits ? this.traits[k as TraitKey] / 40 : this.interests[k as InterestKey] / 6;
+      w *= Math.exp(v * Math.max(-1.5, Math.min(1.5, x)));
+    }
+    return w;
+  }
+
+  /** 생애 갈림길: 꼭 나와야 하는 것(chance 1)이 먼저, 나머지는 해마다 확률로 하나 */
+  private pathChoice() {
+    const fits = PATHS.filter((p) => !this.usedEvents.has(`path:${p.id}`) && this.eventFits(p));
+    if (!fits.length) return;
+    let p: PathChoice | undefined = fits.find((x) => (x.chance ?? 0.5) >= 1);
+    // 나올 확률이 높은 갈림길(학창 시절 등)은 공통 문턱 없이 자기 확률로 바로 굴린다
+    if (!p) p = fits.find((x) => (x.chance ?? 0.5) >= 0.6 && this.r.chance(x.chance!));
+    if (!p) {
+      if (!this.r.chance(0.45)) return;
+      const c = this.r.weighted(fits.map((x) => [x, x.chance ?? 0.5] as [PathChoice, number]))[0];
+      if (!this.r.chance(Math.min(1, (c.chance ?? 0.5) * 1.6))) return;
+      p = c;
+    }
+    this.usedEvents.add(`path:${p.id}`);
+    const prompt = typeof p.prompt === 'function' ? p.prompt(this) : p.prompt;
+    const opts = p.options(this);
+    this.ask(prompt, opts.map((o) => ({ label: o.label, desc: o.desc, auto: this.leanWeight(o), run: () => this.runPathOption(o) })), 'path');
+  }
+
+  private runPathOption(o: PathOption) {
+    for (const [k, v] of Object.entries(o.shape?.traits ?? {}) as [TraitKey, number][]) this.traits[k] = Math.max(-100, Math.min(100, this.traits[k] + v));
+    for (const [k, v] of Object.entries(o.shape?.interests ?? {}) as [InterestKey, number][]) this.interests[k] += v;
+    const [, text, fx] = this.r.weighted(o.outcomes.map((x) => [x, x[0]] as [typeof x, number]))[0];
+    const mood = (fx.happiness ?? 0) + (fx.health ?? 0) + (fx.cash ?? 0) / 500;
+    this.log(text, mood <= -3 ? 'bad' : mood >= 4 ? 'good' : 'event');
+    // 학창 시절은 역량을 반만 반영한다 (진학률 보정)
+    this.apply(this.age < 19 && fx.ability ? { ...fx, ability: fx.ability * 0.5 } : fx);
+    o.then?.(this);
   }
 
   /** 그해 통계로 만든 통계 카드 문장 */
@@ -376,6 +467,8 @@ export class Life {
       relation: clamp(r.normal(55, 12)),
     };
     this.dream = r.pick(this.titles(DREAMS));
+    // 타고난 기질: 성향은 0 근처에서 조금씩 다르게 시작한다
+    for (const k of Object.keys(this.traits) as TraitKey[]) this.traits[k] = Math.round(r.normal(0, 8));
 
     const sexWord = this.sex === 'M' ? '남자아이' : '여자아이';
     this.log(`${this.birthYear}년, ${this.region.name}의 ${this.quintileInfo.label} 집에서 ${sexWord}로 태어났다. 이름은 ${this.name}.`, 'milestone');
@@ -403,8 +496,9 @@ export class Life {
     if (!this.pending) this.lifeOpportunities();
     this.career();
     this.familyYear();
-    // 작은 사건: 거의 해마다 하나, 가끔 둘. 다른 갈림길이 없는 해에는 가끔 작은 갈림길.
-    if (!this.pending && this.age >= 7 && this.r.chance(0.16)) this.randomDilemma();
+    // 생애 갈림길(성향·관심 분야), 없으면 가끔 작은 갈림길. 그 밖에 작은 사건이 거의 해마다 하나, 가끔 둘.
+    if (!this.pending && this.age >= 7) this.pathChoice();
+    if (!this.pending && this.age >= 7 && this.r.chance(0.12)) this.randomDilemma();
     if (!this.pending && this.r.chance(0.85)) this.randomEvent();
     if (!this.pending && this.r.chance(0.3)) this.randomEvent();
     this.economy();
@@ -415,6 +509,8 @@ export class Life {
   choose(index: number): YearResult {
     if (!this.pending) throw new Error('고를 선택지가 없습니다');
     const opt = this.pending.options[index];
+    this.choiceLog.push({ age: this.age, year: this.year, prompt: this.pending.prompt, label: opt.label, kind: this.pending.kind, auto: this.autoPicking });
+    this.autoPicking = false;
     this.pending = null;
     this.current = { entries: [] };
     this.log(`→ ${opt.label}`, 'pick');
@@ -425,6 +521,7 @@ export class Life {
   /** 자동 선택: 각 선택지의 auto 가중치대로 고른다 */
   autoChoiceIndex(): number {
     if (!this.pending) return -1;
+    this.autoPicking = true;
     const opts = this.pending.options.map((o, i) => [i, o.auto ?? 1] as [number, number]);
     return this.r.weighted(opts)[0];
   }
@@ -482,7 +579,15 @@ export class Life {
             },
           }
         : null,
+      traits: { ...this.traits },
+      interest: this.interestLabel(),
+      major: this.major,
     };
+  }
+
+  private interestLabel(): string | null {
+    const k = this.mainInterest();
+    return k ? INTERESTS[k] : null;
   }
 
   // ───────── 사망 ─────────
@@ -821,7 +926,15 @@ export class Life {
 
   private startJob(type: Exclude<JobType, 'none'>, main: boolean, titleList?: Dated[]) {
     const J = D.jobs[type];
-    const options = this.titles(titleList ?? JOB_TITLES[type]);
+    let options = this.titles(titleList ?? JOB_TITLES[type]);
+    // 관심 분야에 맞는 직업 이름이 있으면 그쪽으로 (직업 종류는 그대로)
+    const k = titleList ? null : this.mainInterest();
+    const fav = k ? INTEREST_TITLES[k][type] : undefined;
+    if (fav && this.r.chance(0.65)) {
+      const degree = EDU_ORDER.indexOf(this.edu ?? 'highschool') >= EDU_ORDER.indexOf('local4');
+      const fit = this.titles(fav).filter((t) => degree || !NEEDS_DEGREE.test(t));
+      if (fit.length) options = fit;
+    }
     const title = this.r.pick(options.length ? options : this.titles(JOB_TITLES.sme));
     const af = 1 + (this.stats.ability - 50) / 250;
     const eduPay = this.edu === 'elementary' ? 0.8 : this.edu === 'middle' ? 0.88 : 1;
@@ -1177,14 +1290,31 @@ export class Life {
       this.flags.retired = true;
       return;
     }
-    this.ask('이제 무엇을 할까?', [
-      { label: '다시 일자리를 구한다', desc: '경비, 운전, 돌봄 같은 일', auto: 5, run: () => this.startJob('contract', false, JOB_TITLES.late) },
+    const plan = this.flags.retirePlan;
+    const k = this.mainInterest();
+    const opts: Option[] = [];
+    if (plan === 'work' && k) {
+      opts.push({ label: '배워 둔 일을 한다', desc: `${INTERESTS[k]} 쪽 일`, auto: 6, run: () => this.startJob('contract', false, INTEREST_LATE_JOBS[k]) });
+    }
+    if (plan === 'farm' || this.interests.nature >= 8) {
+      opts.push({
+        label: '시골로 내려가 농사를 짓는다', desc: '귀농', auto: plan === 'farm' ? 6 : 1.5,
+        run: () => {
+          this.residence = { name: this.residence.group === 'province' ? this.residence.name : '충남', group: 'province', seoul: false };
+          this.log('짐을 싸서 시골로 내려갔다.', 'milestone');
+          this.startJob('farm', false, INTEREST_TITLES.nature.farm);
+        },
+      });
+    }
+    opts.push(
+      { label: '다시 일자리를 구한다', desc: '경비, 운전, 돌봄 같은 일', auto: plan ? 2 : 5, run: () => this.startJob('contract', false, JOB_TITLES.late) },
       {
-        label: '모은 돈으로 가게를 연다', desc: '창업 비용 약 7천만 원', auto: 2,
+        label: '모은 돈으로 가게를 연다', desc: '창업 비용 약 7천만 원', auto: 2 * (1 + Math.max(0, this.traits.bold) / 50),
         run: () => { this.cash -= 7000 * this.wage; this.startJob('self', false); },
       },
-      { label: '일을 그만두고 쉰다', auto: 3, run: () => { this.flags.retired = true; this.apply({ happiness: 3 }); this.log('알람 없이 일어나는 아침이 낯설었다.'); } },
-    ]);
+      { label: '일을 그만두고 쉰다', auto: plan === 'save' ? 6 : 3, run: () => { this.flags.retired = true; this.apply({ happiness: 3 }); this.log('알람 없이 일어나는 아침이 낯설었다.'); } },
+    );
+    this.ask('이제 무엇을 할까?', opts);
   }
 
   // ───────── 가족과 건강 ─────────
@@ -1287,7 +1417,7 @@ export class Life {
         // 학창 시절 갈림길은 역량을 반만 반영한다 (진학률 보정)
         this.apply(this.age < 19 && fx.ability ? { ...fx, ability: fx.ability * 0.5 } : fx);
       },
-    })));
+    })), 'dilemma');
   }
 
   // ───────── 돈 (2024년 현재 가치, 만원) ─────────
@@ -1387,6 +1517,10 @@ export class Life {
       lines,
       outliveText: `${this.birthYear}년에 태어난 약 ${fmt(at(BIRTHS, this.birthYear) / 10000, 0)}만 명 중 ${outlive}%가 나보다 오래 산다.`,
       outlivePercent: outlive,
+      traits: { ...this.traits },
+      interest: this.interestLabel(),
+      major: this.major,
+      turningPoints: this.choiceLog.filter((c) => !c.auto).map(({ auto: _a, ...t }) => t),
     };
   }
 }
