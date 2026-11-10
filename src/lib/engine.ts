@@ -578,6 +578,8 @@ export class Life {
     this.dream = r.pick(this.titles(DREAMS));
     // 타고난 기질: 성향은 0 근처에서 조금씩 다르게 시작한다
     for (const k of Object.keys(this.traits) as TraitKey[]) this.traits[k] = Math.round(r.normal(0, 8));
+    // 관심 분야도 1점 미만으로 조금씩 다르게 시작한다 (점수가 같을 때 목록 앞쪽 분야가 늘 이기지 않게)
+    for (const k of Object.keys(this.interests) as InterestKey[]) this.interests[k] = Math.round(r.rand() * 90) / 100;
 
     const sexWord = this.sex === 'M' ? '남자아이' : '여자아이';
     this.log(`${this.birthYear}년, ${this.region.name}의 ${this.quintileInfo.label} 집에서 ${sexWord}로 태어났다. 이름은 ${this.name}.`, 'milestone');

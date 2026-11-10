@@ -74,6 +74,8 @@ export const PATHS: PathChoice[] = [
         { label: '무언가를 만들고 뜯어본다', auto: 2, lean: { science: 1, tech: 1 }, shape: { interests: { science: 2, tech: 2 } }, outcomes: [[1, eraText(y, [[1985, '고장 난 라디오를 뜯어 보다 혼이 났다.'], [2005, '과학상자로 움직이는 자동차를 만들었다.']], '블록 코딩으로 작은 게임을 만들었다.'), { ability: 2, happiness: 2 }]] },
         { label: '집안일을 돕는다', auto: l.quintile <= 2 ? 3 : 1, lean: { thrift: 1 }, shape: { traits: { thrift: 8, diligent: 4 }, interests: { care: 2 } }, outcomes: [[1, l.residence.group === 'province' && y < 1995 ? '학교가 끝나면 논밭에 나가 일손을 거들었다.' : '동생을 돌보고 저녁상을 차렸다.', { relation: 2, happiness: -1 }]] },
       ];
+      opts.push({ label: '곤충과 식물을 기른다', auto: 1.5, lean: { nature: 1 }, shape: { interests: { nature: 4 }, traits: { diligent: 3 } }, outcomes: [[1, y < 1990 ? '논두렁에서 올챙이를 잡아 와 길렀다.' : '방울토마토 화분을 키우며 관찰 일기를 썼다.', { happiness: 2 }], [1, '장수풍뎅이를 애벌레부터 키워 냈다.', { happiness: 3 }]] });
+      opts.push({ label: '가게 일을 거들며 용돈을 번다', auto: l.quintile <= 3 ? 1.5 : 0.8, lean: { biz: 1, thrift: 1 }, shape: { interests: { biz: 4 }, traits: { thrift: 6 } }, outcomes: [[1, '동네 가게에서 심부름을 하고 용돈을 받아 저금통에 모았다.', { happiness: 1, relation: 1 }], [1, '학교 앞에서 딱지를 팔아 친구들 사이에 소문이 났다.', { happiness: 2 }]] });
       if (y >= 1990) opts.push({ label: '컴퓨터 앞에 앉는다', auto: 2, lean: { tech: 1 }, shape: { interests: { tech: 4 }, traits: { social: -3 } }, outcomes: [[1, eraText(y, [[1998, '286 컴퓨터로 게임을 하다 플로피디스크를 망가뜨렸다.'], [2012, '컴퓨터로 게임을 하다 엄마에게 혼이 났다.']], '태블릿으로 영상을 보고 게임을 했다.'), { happiness: 3, ability: -1 }], [1, '컴퓨터로 이것저것 만져 보는 게 재미있었다.', { ability: 1, happiness: 2 }]] });
       if (l.quintile >= 3) opts.push({ label: '피아노·미술 학원에 다닌다', auto: 2, lean: { art: 1 }, shape: { interests: { art: 4 } }, outcomes: [[1, '체르니 30번까지 쳤다.', { ability: 1 }], [1, '미술 학원에서 그린 그림으로 상을 받았다.', { happiness: 3 }]] });
       return opts;
@@ -90,6 +92,8 @@ export const PATHS: PathChoice[] = [
         { label: '운동부', auto: 2, lean: { sport: 1 }, shape: { interests: { sport: 3 }, traits: { social: 4 } }, outcomes: [[1, '반 대항 경기에서 결승골을 넣었다.', { happiness: 4, health: 2 }], [1, '방과 후 연습에 빠지지 않았다.', { health: 3 }]] },
         { label: '봉사 동아리', auto: 1, lean: { care: 1 }, shape: { interests: { care: 3 }, traits: { social: 4 } }, outcomes: [[1, '주말마다 복지관에서 어르신들 말동무를 했다.', { relation: 3 }]] },
       ];
+      if (l.year >= 1990) opts.push({ label: '환경·텃밭 동아리', auto: 1.5, lean: { nature: 1 }, shape: { interests: { nature: 3 } }, outcomes: [[1, '학교 화단에 텃밭을 일구고 상추를 길렀다.', { happiness: 2, health: 1 }]] });
+      if (l.year >= 1995) opts.push({ label: '경제 동아리', auto: 1.2, lean: { biz: 1 }, shape: { interests: { biz: 3 } }, outcomes: [[1, '모의 주식 투자 대회에 나갔다.', { ability: 1, happiness: 2 }], [1, '학교 축제에서 떡볶이를 팔아 남은 돈을 기부했다.', { relation: 2 }]] });
       if (l.year >= 1988) opts.push({ label: '컴퓨터반', auto: 2, lean: { tech: 1 }, shape: { interests: { tech: 3 } }, outcomes: [[1, l.year < 2000 ? '베이직으로 처음 프로그램을 짜 봤다.' : l.year < 2015 ? '홈페이지를 직접 만들어 친구들에게 자랑했다.' : '친구들과 앱을 만들어 대회에 나갔다.', { ability: 2, happiness: 2 }]] });
       return opts;
     },
