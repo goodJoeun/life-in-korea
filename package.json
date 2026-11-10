@@ -11,7 +11,8 @@
     "build": "next build",
     "start": "npx serve out",
     "typecheck": "tsc --noEmit",
-    "simulate": "tsx scripts/simulate.ts 10000"
+    "simulate": "tsx scripts/simulate.ts 10000",
+    "test": "tsx scripts/test.ts"
   },
   "dependencies": {
     "next": "^16.4.5",
