@@ -213,6 +213,15 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .side-empty { font-size: 13.5px; color: var(--ink-3); margin: 6px 0 0; }
 .side-note { font-size: 12px; color: var(--ink-3); margin: 8px 0 0; }
 .side-meta .side-row { font-size: 13px; }
+.me-line { margin: 0 0 8px; font-size: 14px; }
+.me-line small { color: var(--ink-3); }
+.me-traits { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+.me-traits li { display: grid; grid-template-columns: 1fr 72px 1fr; align-items: center; gap: 6px; font-size: 11.5px; color: var(--ink-3); }
+.me-traits li span:first-child { text-align: right; }
+.me-traits li span.on { color: var(--ink); font-weight: 600; }
+.me-traits i { position: relative; height: 6px; background: var(--paper-2); border-radius: 3px; }
+.me-traits i::after { content: ""; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--line); }
+.me-traits b { position: absolute; top: 0; bottom: 0; background: var(--blue); border-radius: 3px; }
 
 /* 시작 화면 오른쪽: 남한 지도와 인구 분포표 */
 .pop h3 { display: flex; align-items: center; gap: 6px; }

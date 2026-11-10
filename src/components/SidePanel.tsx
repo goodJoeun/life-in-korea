@@ -1,4 +1,5 @@
 import type { Snapshot } from '@/lib/engine';
+import { TRAITS, type TraitKey } from '@/lib/content';
 import { won } from '@/lib/text';
 
 interface Props {
@@ -97,6 +98,32 @@ export default function SidePanel({ snap, onClose }: Props) {
             {snap.familyLabel} 집
           </p>
         )}
+      </section>
+
+      <section className="side-card side-me">
+        <h3>나는 이런 사람</h3>
+        <p className="me-line">
+          {snap.interest ? <b>{snap.interest}</b> : <span className="side-empty">아직 관심 분야가 뚜렷하지 않다</span>}
+          {snap.interest && '에 관심이 많다'}
+          {snap.major && <small> · {snap.major}</small>}
+        </p>
+        <ul className="me-traits">
+          {(Object.keys(TRAITS) as TraitKey[]).map((k) => {
+            const v = snap.traits[k];
+            const [pos, neg] = TRAITS[k];
+            return (
+              <li key={k} aria-label={`${pos} ${v > 0 ? v : 0}, ${neg} ${v < 0 ? -v : 0}`}>
+                <span className={v < -10 ? 'on' : ''}>{neg}</span>
+                <i>
+                  {/* ±50이면 한쪽 끝까지 찬다 */}
+                  <b style={v >= 0 ? { left: '50%', width: `${Math.min(50, v)}%` } : { left: `${50 - Math.min(50, -v)}%`, width: `${Math.min(50, -v)}%` }} />
+                </i>
+                <span className={v > 10 ? 'on' : ''}>{pos}</span>
+              </li>
+            );
+          })}
+        </ul>
+        <p className="side-note">갈림길에서 고른 것에 따라 바뀐다.</p>
       </section>
 
       <section className="side-card side-meta">
