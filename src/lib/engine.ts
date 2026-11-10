@@ -111,7 +111,14 @@ export interface Summary {
   traits: Record<TraitKey, number>; interest: string | null; major: string | null;
   /** 스스로 고른 선택(운에 맡긴 것 제외) */
   turningPoints: TurningPoint[];
+  /** 나이별 흐름 (결과 리포트 그래프). 독립 전 순자산은 null */
+  series: LifePoint[];
+  /** 그래프에 점으로 찍을 큰 일 */
+  moments: { age: number; label: string }[];
+  /** 같은 해 태어난 사람들의 공식 통계와 견주기 */
+  cohort: { label: string; mine: string; peers: string }[];
 }
+export interface LifePoint { age: number; year: number; netWorth: number | null; happiness: number; health: number }
 export interface LifeOptions { seed?: number; birthYear?: number }
 
 interface Option { label: string; desc?: string; auto?: number; run: () => void }
@@ -1613,6 +1620,32 @@ export class Life {
       this.age === 0 ? `태어난 해에 ${josa(this.deathCause, '으로/로')} 세상을 떠났다.` : `${this.year}년, ${this.age}세에 ${josa(this.deathCause, '으로/로')} 세상을 떠났다.`,
     );
     const outlive = Math.round(cohortSurvival(this.birthYear, this.age) * 100);
+    // 나이별 마지막 결과만 (선택의 결과가 같은 나이에 여러 번 남는다)
+    const byAge = new Map<number, YearResult>();
+    for (const h of this.history) byAge.set(h.age, h);
+    const series: LifePoint[] = [...byAge.values()].map((h) => ({
+      age: h.age, year: h.year, netWorth: h.snapshot.netWorth, happiness: Math.round(h.snapshot.stats.happiness), health: Math.round(h.snapshot.stats.health),
+    }));
+    const MOMENTS: [RegExp, string][] = [[/일을 시작했다|살기 시작했다|이\/가 됐다$|사장이 됐다|주인이 됐다/, '첫 일'], [/결혼했다\./, '결혼'], [/^첫째 (아들|딸)/, '첫 아이'], [/내 집을 마련했다/, '내 집'], [/오래 다닌 직장을 떠났다|평생 지은 농사를 그만뒀다/, '은퇴']];
+    const moments: { age: number; label: string }[] = [];
+    for (const h of this.history) for (const e of h.entries) {
+      if (e.kind !== 'milestone') continue;
+      const m = MOMENTS.find(([re, label]) => re.test(e.text) && !moments.some((x) => x.label === label));
+      if (m) moments.push({ age: h.age, label: m[1] });
+    }
+    moments.sort((a, b) => a.age - b.age);
+    const by = this.birthYear;
+    const cohort: { label: string; mine: string; peers: string }[] = [
+      { label: '수명', mine: `${this.age}세`, peers: `또래 ${100 - outlive}%보다 오래 살았다` },
+    ];
+    if (this.age >= 20) {
+      const college = at(HIGH_SCHOOL_RATE, by + 16) * at(COLLEGE_RATE, by + 19);
+      cohort.push({ label: '학력', mine: this.edu ? eduName(this.edu) : '—', peers: `그 세대 대학 진학 약 ${pct(college)}%` });
+    }
+    if (this.age >= 40) {
+      cohort.push({ label: '결혼', mine: this.spouse ? '했다' : '하지 않았다', peers: `그 세대 평생 결혼 약 ${pct(at(EVER_MARRIED[this.sex], by + 30))}%` });
+      cohort.push({ label: '자녀', mine: `${this.children.length}명`, peers: `${by + 30}년 무렵 합계출산율 ${fmt(at(TFR, by + 30), 2)}명` });
+    }
     return {
       seed: this.seed,
       name: this.name,
@@ -1636,6 +1669,7 @@ export class Life {
       interest: this.interestLabel(),
       major: this.major,
       turningPoints: this.choiceLog.filter((c) => !c.auto).map(({ auto: _a, ...t }) => t),
+      series, moments, cohort,
     };
   }
 }
