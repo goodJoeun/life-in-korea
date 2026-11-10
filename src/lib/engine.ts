@@ -40,7 +40,13 @@ export interface ChoiceView { prompt: string; options: { label: string; desc: st
 export interface Stats { health: number; happiness: number; ability: number; relation: number }
 export interface FamilyView {
   parentsAlive: boolean;
-  spouse: { name: string; age: number; status: 'married' | 'widowed' | 'divorced'; works: boolean } | null;
+  spouse: {
+    name: string; age: number; status: 'married' | 'widowed' | 'divorced'; works: boolean;
+    /** 학력 (고졸, 수도권 4년제 대학 …) */
+    edu: string;
+    /** 지금 하는 일 (은퇴, 전업주부 …) */
+    job: string;
+  } | null;
   children: { name: string; sex: Sex; age: number }[];
   grandchild: boolean;
 }
@@ -78,7 +84,8 @@ export interface LifeOptions { seed?: number; birthYear?: number }
 interface Option { label: string; desc?: string; auto?: number; run: () => void }
 /** base: 2024년 가치 기준 연봉(경력 반영). 실제 그해 연봉 = base × 그해 실질임금 지수 */
 interface Job { type: JobType; title: string; base: number; since?: number; main: boolean }
-interface Spouse { name: string; sex: Sex; age0: number; incomeBase: number; alive: boolean }
+/** incomeBase: 2024년 가치 연봉(만원), 일하지 않으면 0 */
+interface Spouse { name: string; sex: Sex; age0: number; incomeBase: number; alive: boolean; edu: EduTier; job: string }
 interface Child { sex: Sex; name: string; bornAge: number }
 /** base: 2024년 가치 기준 집값. 실제 그해 집값 = base × 그해 실질 집값 지수 */
 interface House { base: number; debt: number; loan: number; boughtAge: number }
@@ -99,6 +106,29 @@ interface Flags {
  * 그래야 진학·취업·사망률 같은 통계 보정이 그대로 유지된다. 돈(cash)은 그대로.
  */
 const EVENT_STAT_SCALE = 0.6;
+
+const EDU_ORDER: EduTier[] = ['elementary', 'middle', 'highschool', 'college2', 'local4', 'capital4', 'top4'];
+/** 배우자 직업: 학력 무리별 직업 비중 (추정: 학력별 취업 분포 근사) */
+const SPOUSE_JOBS: Record<'low' | 'mid' | 'high', [Exclude<JobType, 'none'>, number][]> = {
+  low: [['sme', 0.4], ['contract', 0.3], ['self', 0.2], ['farm', 0.15]],
+  mid: [['sme', 0.4], ['large', 0.15], ['public', 0.18], ['contract', 0.15], ['self', 0.1], ['farm', 0.03]],
+  high: [['large', 0.33], ['public', 0.25], ['sme', 0.2], ['professional', 0.08], ['contract', 0.07], ['self', 0.05]],
+};
+/** 배우자 연봉 배수 (기본 2,600~5,100만 원에 곱한다, 평균이 1 안팎이 되게 맞춤) */
+const SPOUSE_PAY: Record<Exclude<JobType, 'none'>, number> = { large: 1.35, public: 1.05, professional: 1.8, sme: 0.9, contract: 0.7, self: 0.95, farm: 0.6 };
+/** 4년제 대학을 나와야 하는 직업 이름 (배우자 직업을 고를 때 학력에 맞춘다) */
+const NEEDS_DEGREE = /교사|연구원|엔지니어|기획자|재무|마케터|설계|공무원|공기업/;
+const NATIVE_NUM = ['', '한', '두', '세', '네', '다섯', '여섯', '일곱', '여덟', '아홉', '열'];
+const EDU_PHRASE: Record<EduTier, string> = {
+  elementary: '초등학교를 마친', middle: '중학교를 나온', highschool: '고등학교를 나온', college2: '전문대를 나온',
+  local4: '지방 대학을 나온', capital4: '수도권 대학을 나온', top4: '상위권 대학을 나온',
+};
+
+/** 결혼한 부부에게 n번째 아이를 가질 기회가 오는 해마다의 기본 확률 (그해 혼인 출산 배수를 곱한다, 모형 보정값) */
+const CHILD_HAZARD = [0.32, 0.18, 0.035, 0.022];
+/** 엄마 나이 33~34 / 35~36 / 37~38 / 39~40 / 41~42세의 배수. 32세까지는 1 (추정: 연령별 출산율 곡선의 모양) */
+const AGE_FERTILITY = [1.05, 0.95, 0.65, 0.28, 0.1];
+
 function scaleFx(fx: Effect, k: number): Effect {
   const out: Effect = { ...fx };
   for (const key of ['health', 'happiness', 'ability', 'relation'] as StatKey[]) {
@@ -432,7 +462,10 @@ export class Life {
       family: {
         parentsAlive: !this.flags.parentsGone,
         spouse: sp
-          ? { name: sp.name, age: this.spouseAge(), status: this.married ? 'married' : sp.alive ? 'divorced' : 'widowed', works: sp.incomeBase > 0 }
+          ? {
+              name: sp.name, age: this.spouseAge(), status: this.married ? 'married' : sp.alive ? 'divorced' : 'widowed', works: spouseIncome > 0,
+              edu: eduName(sp.edu), job: sp.incomeBase > 0 && this.spouseAge() >= 60 ? '은퇴' : sp.job,
+            }
           : null,
         children: this.children.map((c) => ({ name: c.name, sex: c.sex, age: this.age - c.bornAge })),
         grandchild: !!this.flags.grandchild,
@@ -882,14 +915,21 @@ export class Life {
     const spouseAge = this.sex === 'M' ? this.age - diff : this.age + diff;
     const spouseName = r.weighted(D.surnames)[0] + r.pick(namesFor(spouseSex, this.year - spouseAge));
     const places = this.titles(MEETING_PLACES).filter((m) => !(m === '회사에서' && (!this.job || ['none', 'farm', 'self'].includes(this.job.type))) && !(m === '대학 동기 모임에서' && !['college2', 'local4', 'capital4', 'top4'].includes(this.edu ?? '')));
-    this.log(`${r.pick(places)} 만난 ${josa(spouseName, '과/와')} 진지한 사이가 됐다.`, 'good');
+    const place = r.pick(places);
+    const sp = this.spouseProfile(spouseSex, place === '대학 동기 모임에서');
+    const gap = spouseAge - this.age;
+    const rel = gap === 0 ? '동갑인' : `나보다 ${Math.abs(gap) <= 10 ? NATIVE_NUM[Math.abs(gap)] : Math.abs(gap)} 살 ${gap > 0 ? '많은' : '어린'}`;
+    const intro = sp.incomeBase > 0
+      ? `${rel} ${spouseAge}세, ${EDU_PHRASE[sp.edu]} ${josa(sp.job, '이었다/였다')}`
+      : `${rel} ${spouseAge}세, ${EDU_PHRASE[sp.edu]} 사람이었다. 결혼하면 살림을 맡기로 했다`;
+    const pay = sp.incomeBase > 0 ? ` · 연 ${won(Math.round((sp.incomeBase * this.wage) / 100) * 100)}` : '';
+    this.log(`${place} 만난 ${josa(spouseName, '과/와')} 진지한 사이가 됐다. ${intro}.`, 'good');
     this.ask('결혼 이야기가 나왔다.', [
       {
-        label: '결혼한다', desc: `${spouseName}, ${spouseAge}세`, auto: 8.5,
+        label: '결혼한다', desc: `${spouseName} · ${spouseAge}세 · ${eduName(sp.edu)} · ${sp.job}${pay}`, auto: 8.5,
         run: () => {
           this.married = true;
-          const works = r.chance(this.sex === 'M' ? at(WIFE_WORKS, this.year) : 0.95);
-          this.spouse = { name: spouseName, sex: spouseSex, age0: spouseAge - this.age, incomeBase: works ? 2600 + r.rand() * 2500 : 0, alive: true };
+          this.spouse = { name: spouseName, sex: spouseSex, age0: spouseAge - this.age, alive: true, ...sp };
           const help = this.flags.parentHelpUsed ? 0 : [0, 1000, 3000, 6000, 20000][this.quintile - 1] * (0.5 + r.rand()) * this.wage;
           this.flags.parentHelpUsed = true;
           this.cash += help;
@@ -909,6 +949,28 @@ export class Life {
         },
       },
     ]);
+  }
+
+  /**
+   * 배우자의 학력·직업·연봉을 대략 정한다.
+   * 학력은 나와 비슷한 쪽으로(동질혼 경향), 1995년 이전에는 남편 쪽 학력이 조금 높은 경향을 둔다. (추정)
+   */
+  private spouseProfile(spouseSex: Sex, college: boolean): { edu: EduTier; job: string; incomeBase: number } {
+    const r = this.r;
+    const mine = EDU_ORDER.indexOf(this.edu ?? 'highschool');
+    const tilt = this.year < 1995 ? (spouseSex === 'M' ? 0.5 : -0.5) : 0;
+    // 대학 동기 모임에서 만났으면 배우자도 대학을 나왔다
+    const lo = college ? EDU_ORDER.indexOf('college2') : 0;
+    const edu = EDU_ORDER[Math.max(lo, Math.min(EDU_ORDER.length - 1, Math.round(mine + tilt + r.normal(0, 1))))];
+    const works = r.chance(spouseSex === 'F' ? at(WIFE_WORKS, this.year) : 0.95);
+    if (!works) return { edu, job: spouseSex === 'F' ? '전업주부' : '구직 중', incomeBase: 0 };
+    const group = EDU_ORDER.indexOf(edu) <= 2 ? 'low' : EDU_ORDER.indexOf(edu) <= 4 ? 'mid' : 'high';
+    const farmOk = this.year < 2000 && this.residence.group === 'province';
+    const type = r.weighted(SPOUSE_JOBS[group].map(([t, w]) => [t, t === 'farm' && !farmOk ? 0 : w] as [Exclude<JobType, 'none'>, number]))[0];
+    const titles = this.titles(JOB_TITLES[type]);
+    const fit = EDU_ORDER.indexOf(edu) >= EDU_ORDER.indexOf('local4') ? titles : titles.filter((t) => !NEEDS_DEGREE.test(t));
+    const job = r.pick(fit.length ? fit : titles);
+    return { edu, job, incomeBase: (2600 + r.rand() * 2500) * SPOUSE_PAY[type] };
   }
 
   /** 여성의 결혼·출산 퇴직(경력단절). 시대에 따라 확률이 다르다 */
@@ -934,8 +996,10 @@ export class Life {
     if (motherAge > 42 || n >= maxKids) return false;
     if (n > 0 && this.age - this.children[n - 1].bornAge < 2) return false;
     const fert = at(MARITAL_FERTILITY, this.year);
-    let p = Math.min(0.6, [0.27, 0.13, 0.03, 0.02][n] * fert);
-    if (motherAge >= 38) p *= 0.5;
+    // 엄마 나이에 따라 임신·출산 가능성이 35세 무렵부터 빠르게 준다 (추정: 연령별 출산율 곡선의 모양).
+    // 대신 결혼 초·첫째 뒤 몇 해 안의 확률을 높여, 평생 낳는 자녀 수는 그대로 두고 늦은 출산만 줄인다.
+    const ageMod = motherAge <= 32 ? 1 : motherAge <= 34 ? AGE_FERTILITY[0] : motherAge <= 36 ? AGE_FERTILITY[1] : motherAge <= 38 ? AGE_FERTILITY[2] : motherAge <= 40 ? AGE_FERTILITY[3] : AGE_FERTILITY[4];
+    const p = Math.min(0.75, CHILD_HAZARD[n] * fert * ageMod);
     if (!this.r.chance(p)) return false;
     const ord = ['첫째', '둘째', '셋째', '넷째'][n];
     const yes = [7.5, 5.5, 3.5, 3][n] * Math.max(1, fert);

@@ -36,14 +36,18 @@ export default function SidePanel({ snap, onClose }: Props) {
         <dl>
           <Row label="부모님" value={f.parentsAlive ? `계심 · ${snap.familyLabel} 집` : '돌아가심'} />
           {f.spouse ? (
-            <Row
-              label={spouseWord}
-              value={
-                f.spouse.status === 'married'
-                  ? `${f.spouse.name} · ${f.spouse.age}세${f.spouse.works ? ' · 맞벌이' : ''}`
-                  : `${f.spouse.name} · ${SPOUSE_STATUS[f.spouse.status]}`
-              }
-            />
+            f.spouse.status === 'married' ? (
+              <>
+                <Row label={spouseWord} value={`${f.spouse.name} · ${f.spouse.age}세`} />
+                <Row
+                  label={`${spouseWord}의 일`}
+                  value={a && a.income.spouse > 0 ? `${f.spouse.job} · 연 ${won(Math.round(a.income.spouse / 100) * 100)}` : f.spouse.job}
+                />
+                <Row label={`${spouseWord}의 학력`} value={f.spouse.edu} />
+              </>
+            ) : (
+              <Row label={spouseWord} value={`${f.spouse.name} · ${SPOUSE_STATUS[f.spouse.status]}`} />
+            )
           ) : (
             <Row label="배우자" value={snap.age >= 20 ? '미혼' : '—'} />
           )}

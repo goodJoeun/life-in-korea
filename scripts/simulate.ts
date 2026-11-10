@@ -12,7 +12,7 @@ import { createLife } from '../src/lib/engine';
 import { KDATA as D } from '../src/lib/data';
 import { won } from '../src/lib/text';
 import { maleShare, nationalSexRatio, regionBirthWeights } from '../src/lib/births';
-import { at, COLLEGE_RATE, HIGH_SCHOOL_RATE, LIFE_EXPECTANCY, MIDDLE_SCHOOL_RATE, FIRST_MARRIAGE_AGE, CURRENT_YEAR } from '../src/lib/timeline';
+import { at, COLLEGE_RATE, HIGH_SCHOOL_RATE, LIFE_EXPECTANCY, MIDDLE_SCHOOL_RATE, FIRST_BIRTH_AGE, FIRST_MARRIAGE_AGE, CURRENT_YEAR } from '../src/lib/timeline';
 
 function run(birthYear: number, N: number) {
   const acc = {
@@ -20,7 +20,7 @@ function run(birthYear: number, N: number) {
     middle: [0, 0], high: [0, 0], college: [0, 0],
     jobAt30: {} as Record<string, number>, jobAt30Count: 0,
     married50: { M: [0, 0], F: [0, 0] }, firstMarriage: { M: [] as number[], F: [] as number[] },
-    kidsF45: [] as number[], house50: [0, 0], netWorth60: [] as number[], cancer: 0, health: [] as number[],
+    kidsF45: [] as number[], firstBirthF: [] as number[], marriageToBirthF: [] as number[], house50: [0, 0], netWorth60: [] as number[], cancer: 0, health: [] as number[],
     regions: {} as Record<string, number>, male: 0, kidSex: [[0, 0], [0, 0], [0, 0]] as number[][], entries: [] as number[], choices: [] as number[],
   };
   for (let i = 0; i < N; i++) {
@@ -53,6 +53,10 @@ function run(birthYear: number, N: number) {
     if (life.edu) { acc.edu[life.edu] = (acc.edu[life.edu] || 0) + 1; acc.eduCount++; }
     if (life.flags.cancerAge !== undefined) acc.cancer++;
     if (marriedAt !== null) acc.firstMarriage[life.sex].push(marriedAt);
+    if (life.sex === 'F' && life.children.length) {
+      acc.firstBirthF.push(life.children[0].bornAge);
+      if (marriedAt !== null) acc.marriageToBirthF.push(life.children[0].bornAge - marriedAt);
+    }
     acc.regions[life.region.id] = (acc.regions[life.region.id] || 0) + 1;
     if (life.sex === 'M') acc.male++;
     life.children.forEach((c, k) => { const o = Math.min(k, 2); acc.kidSex[o][c.sex === 'M' ? 0 : 1]++; });
@@ -84,6 +88,9 @@ function report(birthYear: number, N: number) {
   row('첫 결혼 나이 중앙값 남', median(acc.firstMarriage.M) + '세', `그 무렵 평균 초혼 ${at(FIRST_MARRIAGE_AGE.M, birthYear + 30).toFixed(1)}세`);
   row('첫 결혼 나이 중앙값 여', median(acc.firstMarriage.F) + '세', `그 무렵 평균 초혼 ${at(FIRST_MARRIAGE_AGE.F, birthYear + 28).toFixed(1)}세`);
   row('45세 여성 평균 자녀', mean(acc.kidsF45).toFixed(2) + '명');
+  const fb = mean(acc.firstBirthF);
+  row('여성 첫 출산 나이 평균', fb.toFixed(1) + '세', `${birthYear + Math.round(fb)}년 무렵 첫째아 평균 출산 연령 ${at(FIRST_BIRTH_AGE, birthYear + Math.round(fb)).toFixed(1)}세`);
+  row('결혼→첫 출산 평균', mean(acc.marriageToBirthF).toFixed(1) + '년', `결혼 2년 안에 낳은 비율 ${pct(acc.marriageToBirthF.filter((g) => g <= 2).length / (acc.marriageToBirthF.length || 1))}`);
   row('50세 자가 보유', ratio(acc.house50));
   row('60세 순자산 중앙값', won(median(acc.netWorth60)));
   row('암 진단 경험', pct(acc.cancer / N));
