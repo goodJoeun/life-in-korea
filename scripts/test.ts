@@ -69,6 +69,17 @@ function playOne(birthYear: number, seed: number, pickerName: string) {
   let guard = 0;
   while (!res.dead) {
     if (++guard > 400) { fail('끝나지 않음 (동작 400번 넘음)', where); return; }
+    // 무작위 플레이어는 가끔 돈 관리 계획을 바꾼다 (되살리기에 { p } 동작이 섞이게)
+    if (pickerName === 'random' && life.independent && rnd() < 0.05) {
+      const st = Math.floor(rnd() * 6) * 10, gl = Math.floor(rnd() * 4) * 10, cr = Math.floor(rnd() * 3) * 10;
+      const plan = { spend: (['frugal', 'normal', 'loose'] as const)[Math.floor(rnd() * 3)], alloc: { deposit: 100 - st - gl - cr, stock: st, global: gl, crypto: cr } };
+      const pr = applyAction(life, { p: plan });
+      if (!pr) { fail('계획 바꾸기 실패', where); return; }
+      actions.push({ p: plan });
+      checkResult(where, life, pr);
+      const as = pr.snapshot.assets;
+      if (as && Math.abs(as.deposit + as.invest.stock + as.invest.global + as.invest.crypto - as.cash) > 2) fail('예금+투자 ≠ 쓸 수 있는 돈', `${where} ${JSON.stringify(as)}`);
+    }
     const a: LifeAction = res.choice ? PICKERS[pickerName](life, res, rnd) : 'n';
     const next = applyAction(life, a);
     if (!next) { fail('적용할 수 없는 동작', `${where} ${JSON.stringify(a)}`); return; }

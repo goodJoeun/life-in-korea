@@ -272,8 +272,6 @@ export const RANDOM_EVENTS: Record<Stage, RandomEvent[]> = {
     { text: '야근이 몇 달째 이어졌다.', fx: { health: -3, happiness: -3 }, when: working },
     { text: '오랜만에 동창회에 나갔다.', fx: { relation: 4, happiness: 2 } },
     { text: '부모님이 편찮으셔서 병원을 자주 오갔다.', fx: { happiness: -4 }, when: parentsAlive, ages: [40, 54] },
-    { text: '주식으로 꽤 손해를 봤다.', fx: { happiness: -4, cash: -800 }, from: 1985 },
-    { text: '주식으로 쏠쏠한 수익을 냈다.', fx: { happiness: 4, cash: 900 }, from: 1985 },
     { text: '회사에서 큰 프로젝트를 맡아 해냈다.', fx: { ability: 3, happiness: 3 }, when: office },
     { text: '승진에서 밀렸다.', fx: { happiness: -5 }, when: office, ages: [35, 54] },
     { text: '팀장이 됐다. 책임이 무거워졌다.', fx: { ability: 2, happiness: 1, health: -1 }, when: office, ages: [38, 50] },
@@ -506,13 +504,6 @@ export const DILEMMAS: Dilemma[] = [
     options: [
       { label: '빌려준다', auto: 5, outcomes: [[5, '몇 달 뒤 고맙다며 갚았다.', { relation: 3 }], [5, '그 뒤로 연락이 끊겼다.', { relation: -4, happiness: -4, cash: -500 }]] },
       { label: '거절한다', auto: 4, outcomes: [[1, '서운해하는 기색이 역력했다.', { relation: -2 }]] },
-    ],
-  },
-  {
-    prompt: '모아 둔 돈을 어디에 넣을까?', ages: [24, 60], from: 1988, when: (s) => s.independent && s.cash > 500,
-    options: [
-      { label: '적금', auto: 6, outcomes: [[1, '이자는 적었지만 마음은 편했다.', { cash: 100 }]] },
-      { label: '주식', auto: 4, outcomes: [[45, '운 좋게 올랐다.', { cash: 600, happiness: 3 }], [55, '사자마자 떨어졌다.', { cash: -500, happiness: -4 }]] },
     ],
   },
   {

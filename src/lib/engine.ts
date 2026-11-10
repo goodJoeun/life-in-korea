@@ -29,7 +29,7 @@ import {
   at, BACKGROUND_HAZARD, BIRTHS, CAREER_BREAK, COLLEGE_RATE, CURRENT_YEAR, FARM_SHARE, FEMALE_SCHOOL_GAP,
   FIRST_MARRIAGE_AGE, HIGH_SCHOOL_RATE, HISTORY, INFANT_MORTALITY, LIFE_EXPECTANCY, MARITAL_FERTILITY,
   EVER_MARRIED, MARRIAGE_SD, MIDDLE_SCHOOL_RATE, NATIONAL_PENSION_START, REAL_HOUSE, REAL_WAGE, TFR, UNEMPLOYMENT,
-  WIFE_WORKS, alternativeServiceName, basicPension, elementaryName, examName, militaryMonths,
+  WIFE_WORKS, alternativeServiceName, basicPension, depositRate, elementaryName, examName, INVEST_FROM, INVEST_FUTURE, investReturn, militaryMonths,
   tutoringBanned, vocationalSchoolName,
 } from './timeline';
 
@@ -52,10 +52,25 @@ export interface FamilyView {
   children: { name: string; sex: Sex; age: number }[];
   grandchild: boolean;
 }
+// ───────── 돈 관리 (claude/money/SKILL.md) ─────────
+export type Spend = 'frugal' | 'normal' | 'loose';
+export type InvestKind = 'stock' | 'global' | 'crypto';
+export const INVEST_KINDS: InvestKind[] = ['stock', 'global', 'crypto'];
+/** alloc: 쓸 수 있는 돈을 어디에 둘지 (%, 합 100) */
+export interface MoneyPlan { spend: Spend; alloc: Record<'deposit' | InvestKind, number> }
+export const DEFAULT_PLAN: MoneyPlan = { spend: 'normal', alloc: { deposit: 100, stock: 0, global: 0, crypto: 0 } };
+/** 가처분소득 가운데 쓰는 비율 */
+export const SPEND_RATE: Record<Spend, number> = { frugal: 0.6, normal: 0.7, loose: 0.8 };
+/** 같은 해에도 사람마다 다른 수익 (종목 차이) */
+const INVEST_NOISE: Record<InvestKind, number> = { stock: 0.08, global: 0.03, crypto: 0.25 };
+
 /** 금액은 모두 만원, 2024년 가치 */
 export interface AssetView {
   netWorth: number;
+  /** 쓸 수 있는 돈 전체(예금 + 투자). 빚이면 음수 */
   cash: number;
+  deposit: number;
+  invest: Record<InvestKind, number>;
   house: { price: number; debt: number } | null;
   income: { self: number; spouse: number; pension: number };
 }
@@ -73,6 +88,11 @@ export interface Snapshot {
   /** 가장 큰 관심 분야 이름 (아직 없으면 null) */
   interest: string | null;
   major: string | null;
+  plan: MoneyPlan;
+  /** 그해 고를 수 있는 투자 */
+  investOpen: Record<InvestKind, boolean>;
+  /** 지난해 실질 수익률 (들고 있던 것만) */
+  lastReturn: Partial<Record<InvestKind, number>>;
 }
 /** 직접 고른 선택 하나 (결과 리포트의 '인생의 갈림길') */
 export interface TurningPoint { age: number; year: number; prompt: string; label: string; kind: ChoiceKind }
@@ -275,6 +295,10 @@ export class Life {
   major: string | null = null;
   /** 고른 선택의 기록 */
   choiceLog: (TurningPoint & { auto: boolean })[] = [];
+  /** 돈 관리 계획. cash 는 쓸 수 있는 돈 전체이고, 그 가운데 invest 만큼이 투자에 들어 있다 */
+  plan: MoneyPlan = { spend: 'normal', alloc: { ...DEFAULT_PLAN.alloc } };
+  invest: Record<InvestKind, number> = { stock: 0, global: 0, crypto: 0 };
+  lastReturn: Partial<Record<InvestKind, number>> = {};
 
   constructor(opts: LifeOptions = {}) {
     this.seed = (opts.seed === undefined ? Math.floor(Math.random() * 2 ** 32) : opts.seed) >>> 0;
@@ -338,6 +362,81 @@ export class Life {
   }
   /** 연봉을 p만큼 올린다 (이직·대학원 등) */
   raise(p: number) { if (this.job && this.job.base > 0) this.job.base *= 1 + p; }
+  /**
+   * 돈 관리 계획을 바꾼다 (화면의 돈 관리 패널, 되살리기 동작 { p }).
+   * 배분은 바로 다시 나눈다. 그해 결과를 돌려주지만 기록(history)에는 남기지 않는다.
+   */
+  setPlan(plan: MoneyPlan): YearResult {
+    const a = plan.alloc;
+    const clean = (v: number) => (Number.isFinite(v) ? Math.max(0, Math.min(100, Math.round(v))) : 0);
+    const alloc = { deposit: 0, stock: clean(a.stock), global: clean(a.global), crypto: clean(a.crypto) };
+    let rest = 100;
+    for (const k of INVEST_KINDS) { alloc[k] = Math.min(alloc[k], rest); rest -= alloc[k]; }
+    alloc.deposit = rest;
+    this.plan = { spend: SPEND_RATE[plan.spend] ? plan.spend : 'normal', alloc };
+    this.rebalance();
+    return {
+      age: this.age, year: this.year, entries: [],
+      choice: this.pending ? { prompt: this.pending.prompt, options: this.pending.options.map((o) => ({ label: o.label, desc: o.desc ?? '' })) } : null,
+      dead: !this.alive, isChoiceResult: true, snapshot: this.snapshot(),
+    };
+  }
+  /** 예금에서 pct 만큼을 한 투자로 옮긴다 (갈림길용) */
+  tiltPlan(kind: InvestKind, pct: number) {
+    const alloc = { ...this.plan.alloc };
+    const move = Math.min(alloc.deposit, pct);
+    alloc.deposit -= move;
+    alloc[kind] += move;
+    this.plan = { ...this.plan, alloc };
+    this.rebalance();
+  }
+  /** 투자를 모두 예금으로 (갈림길용) */
+  safePlan() {
+    this.plan = { ...this.plan, alloc: { ...DEFAULT_PLAN.alloc } };
+    this.rebalance();
+  }
+  setSpend(s: Spend) { this.plan = { ...this.plan, spend: s }; }
+  /** 투자에 들어 있는 비율 (0~1) */
+  get riskShare() { return (this.plan.alloc.stock + this.plan.alloc.global + this.plan.alloc.crypto) / 100; }
+
+  /** 쓸 수 있는 돈 전체를 계획대로 다시 나눈다. 아직 살 수 없는 투자 몫은 예금에 둔다 */
+  private rebalance() {
+    const liquid = this.cash;
+    for (const k of INVEST_KINDS) this.invest[k] = liquid > 0 && this.year >= INVEST_FROM[k] ? (liquid * this.plan.alloc[k]) / 100 : 0;
+  }
+
+  /** 한 해 동안 돈이 불어나거나 줄어든다: 다시 나누고, 예금 이자와 투자 수익률을 곱한다 */
+  private grow() {
+    const y = this.year;
+    if (this.cash <= 0) {
+      for (const k of INVEST_KINDS) this.invest[k] = 0;
+      this.lastReturn = {};
+      this.cash *= 1.04; // 빚 이자
+      return;
+    }
+    this.rebalance();
+    let deposit = this.cash - this.invest.stock - this.invest.global - this.invest.crypto;
+    deposit *= 1 + depositRate(y);
+    this.lastReturn = {};
+    const w = this.wage;
+    for (const k of INVEST_KINDS) {
+      const v = this.invest[k];
+      if (v <= 0) continue;
+      const [mean, sd] = INVEST_FUTURE[k];
+      const base = investReturn(k, y) ?? Math.max(-0.85, this.r.normal(mean, sd));
+      const r = Math.max(-0.9, base + this.r.normal(0, INVEST_NOISE[k]));
+      this.invest[k] = v * (1 + r);
+      this.lastReturn[k] = r;
+      // 크게 오르내린 해는 기록에 남긴다
+      if (v > 300 * w) {
+        const name = k === 'stock' ? '주식' : k === 'global' ? '해외 주식' : '코인';
+        if (r <= -0.25) this.log(`${josa(name, '이/가')} 크게 떨어졌다. 계좌를 보며 한숨을 쉬었다. (${Math.round(r * 100)}%)`, 'bad');
+        else if (r >= 0.35) this.log(`${name} 값이 크게 올랐다. (+${Math.round(r * 100)}%)`, 'good');
+      }
+    }
+    this.cash = deposit + this.invest.stock + this.invest.global + this.invest.crypto;
+  }
+
   /** 갈림길에서 새 일을 시작한다 */
   beginJob(type: Exclude<JobType, 'none'>, main: boolean, titles?: Dated[]) { this.startJob(type, main, titles); }
 
@@ -571,6 +670,7 @@ export class Life {
         ? {
             netWorth: Math.round(this.netWorth),
             cash: Math.round(this.cash),
+            ...this.holdings(),
             house: this.house ? { price: Math.round(this.housePrice), debt: Math.round(this.house.debt) } : null,
             income: {
               self: Math.round(this.job && this.job.type !== 'none' ? this.job.base * w : 0),
@@ -582,7 +682,19 @@ export class Life {
       traits: { ...this.traits },
       interest: this.interestLabel(),
       major: this.major,
+      plan: { spend: this.plan.spend, alloc: { ...this.plan.alloc } },
+      investOpen: { stock: this.year >= INVEST_FROM.stock, global: this.year >= INVEST_FROM.global, crypto: this.year >= INVEST_FROM.crypto },
+      lastReturn: { ...this.lastReturn },
     };
+  }
+
+  /** 지금 들고 있는 예금과 투자. 그해 중간에 돈을 써서 투자보다 쓸 돈이 적어졌으면 투자를 줄여 보여 준다 */
+  private holdings(): { deposit: number; invest: Record<InvestKind, number> } {
+    const total = this.invest.stock + this.invest.global + this.invest.crypto;
+    const room = Math.max(0, this.cash);
+    const k = total > room ? room / total : 1;
+    const invest = { stock: Math.round(this.invest.stock * k), global: Math.round(this.invest.global * k), crypto: Math.round(this.invest.crypto * k) };
+    return { deposit: Math.round(this.cash - invest.stock - invest.global - invest.crypto), invest };
   }
 
   private interestLabel(): string | null {
@@ -1437,7 +1549,10 @@ export class Life {
     // 세금·사회보험 약 12%, 소비는 가처분소득의 70% + 자녀·주거비 (가계동향조사 흑자율 약 30% 근사)
     // 최저 생활비는 그해 실질임금에 비례한다(외벌이가 흔하던 시절의 생활 수준)
     const disposable = income * (income > 2000 * w ? 0.88 : 1);
-    let expenses = Math.max((this.married ? 1800 : 1200) * Math.max(0.3, w), disposable * 0.7);
+    let expenses = Math.max((this.married ? 1800 : 1200) * Math.max(0.3, w), disposable * SPEND_RATE[this.plan.spend]);
+    // 아껴 쓰면 조금 답답하고, 넉넉히 쓰면 조금 즐겁다
+    if (this.plan.spend === 'frugal') this.apply({ happiness: -0.6 });
+    else if (this.plan.spend === 'loose') this.apply({ happiness: 0.6 });
     for (const c of this.children) if (this.age - c.bornAge < 25) expenses += 600 * w;
     if (!this.house && this.age >= 25) expenses += (this.residence.seoul ? 700 : 400) * w; // 월세·전세 이자
     if (this.age >= 65) expenses *= 0.85;
@@ -1449,7 +1564,7 @@ export class Life {
     }
     const net = disposable - expenses - payment;
     this.cash += net >= 0 ? net : Math.max(net, -expenses * 0.5);
-    this.cash *= this.cash > 0 ? (this.year < 2000 ? 1.03 : 1.01) : 1.04; // 실질 이자 (2000년 전 예금 금리가 높았다)
+    this.grow(); // 예금 이자·투자 수익률 (2000년 전 예금 금리가 높았다)
     if (this.age >= 60 && !this.house && this.cash < -3000 * w) {
       this.cash = -3000 * w;
       if (!this.flags.welfare) {
