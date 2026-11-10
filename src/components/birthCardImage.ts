@@ -9,8 +9,9 @@ const W = 1080;
 const MIN_H = 1350;
 const PAD = 80;
 const C = { paper: '#f3efe6', card: '#ffffff', ink: '#221f1a', ink2: '#5d564b', ink3: '#8d8576', line: '#d8d0c0', accent: '#b2432b', land: '#d9cebd' };
-const SERIF = '"Nanum Myeongjo", "AppleMyungjo", "Batang", "Noto Serif KR", serif';
-const SANS = '"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif';
+// 화면과 같은 폰트를 쓴다. next/font 는 폰트 이름을 바꿔 등록하므로 그릴 때 CSS 변수(--serif, --sans)에서 읽는다.
+let SERIF = 'serif';
+let SANS = 'sans-serif';
 /** 남한만 보이는 지도 영역 (koreaMap 좌표) */
 const MAP_BOX = { x: 52, y: 236, w: 266, h: 278 };
 
@@ -168,6 +169,20 @@ function draw(ctx: CanvasRenderingContext2D, d: BirthCardData, height: number): 
 }
 
 export async function birthCardPng(d: BirthCardData): Promise<Blob> {
+  const css = getComputedStyle(document.documentElement);
+  SERIF = css.getPropertyValue('--serif').trim() || SERIF;
+  SANS = css.getPropertyValue('--sans').trim() || SANS;
+  // 폰트는 글자 범위별 조각으로 나뉘어 있어, 카드에 쓸 글자가 든 조각을 먼저 받아 둔다
+  const text = [d.name, d.place, d.who, ...d.national.flat(), ...d.local.flat(), ...d.kr, ...d.world, ...d.born,
+    '5000만분의 1 · 출생 카드 대한민국 태어난 곳 그해 있었던 일 같은 해 태어난 사람 한국 세계 너는 누구로 태어날까? #', d.note ?? ''].join(' ');
+  try {
+    await Promise.all([
+      document.fonts.load(`800 92px ${SERIF}`, d.name),
+      ...[400, 600, 700].map((w) => document.fonts.load(`${w} 30px ${SANS}`, text)),
+    ]);
+  } catch {
+    /* 못 받으면 시스템 폰트로 그린다 */
+  }
   await document.fonts?.ready;
   // 한 번 그려 보고 높이를 정한 뒤 다시 그린다
   const probe = document.createElement('canvas');

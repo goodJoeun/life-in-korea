@@ -11,8 +11,9 @@
   --blue-soft: #dde5ee;
   --good: #3f6b46;
   --bad: #8a3b2f;
-  --serif: "Nanum Myeongjo", "AppleMyungjo", "Batang", "Noto Serif KR", serif;
-  --sans: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif;
+  /* 폰트는 layout.tsx 에서 직접 호스팅해 불러온다. 뒤쪽은 받기 전·실패했을 때 쓰는 시스템 폰트 */
+  --serif: var(--font-serif), "Nanum Myeongjo", "AppleMyungjo", "Batang", serif;
+  --sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif;
   --radius: 14px;
   --max: 640px;
 }
@@ -41,8 +42,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 @media (min-width: 960px) {
   .screen.intro { max-width: 1060px; }
   .intro-layout { display: grid; grid-template-columns: minmax(0, 600px) 340px; justify-content: space-between; gap: 40px; align-items: start; }
-  .intro-side { position: sticky; top: 0; padding: 64px 0 24px; max-height: 100vh; overflow-y: auto; scrollbar-width: none; }
-  .intro-side::-webkit-scrollbar { display: none; } /* 스크롤은 되고 막대만 숨긴다 */
+  /* 지도 카드는 고정하거나 따로 스크롤하지 않고, 왼쪽 내용과 함께 페이지 하나로 스크롤된다 */
+  .intro-side { padding: 64px 0 48px; }
 }
 .eyebrow { margin: 0 0 8px; font-size: 13px; letter-spacing: .12em; color: var(--accent); font-weight: 600; }
 .title {
