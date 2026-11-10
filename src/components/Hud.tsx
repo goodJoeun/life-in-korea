@@ -26,6 +26,8 @@ interface Props {
   onTogglePause: () => void;
   onSkip: () => void;
   onOpenSide: () => void;
+  /** 홈으로 (진행 중인 생은 저장된다) */
+  onHome: () => void;
 }
 
 function level(v: number): string {
@@ -57,6 +59,9 @@ export default function Hud(props: Props) {
           </button>
           {showControls && (
             <>
+              <button className="ctrl home" onClick={props.onHome} aria-label="홈으로. 진행 중인 생은 저장된다" title="홈으로 (저장됨)">
+                홈
+              </button>
               <button className={`ctrl${paused ? ' on' : ''}`} onClick={props.onTogglePause} aria-label={paused ? '계속' : '일시정지'} title="Space">
                 {paused ? '▶' : '❚❚'}
               </button>

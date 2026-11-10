@@ -36,6 +36,14 @@ button { font: inherit; color: inherit; cursor: pointer; }
 /* ───── 시작 화면 ───── */
 .intro { min-height: 100vh; display: flex; align-items: center; }
 .intro-inner { padding: 64px 0 48px; width: 100%; }
+.intro-layout { width: 100%; min-width: 0; }
+.intro-side { padding-bottom: 48px; }
+@media (min-width: 960px) {
+  .screen.intro { max-width: 1060px; }
+  .intro-layout { display: grid; grid-template-columns: minmax(0, 600px) 340px; justify-content: space-between; gap: 40px; align-items: start; }
+  .intro-side { position: sticky; top: 0; padding: 64px 0 24px; max-height: 100vh; overflow-y: auto; scrollbar-width: none; }
+  .intro-side::-webkit-scrollbar { display: none; } /* 스크롤은 되고 막대만 숨긴다 */
+}
 .eyebrow { margin: 0 0 8px; font-size: 13px; letter-spacing: .12em; color: var(--accent); font-weight: 600; }
 .title {
   font-family: var(--serif);
@@ -47,6 +55,12 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .lead { font-size: 18px; margin: 0 0 12px; }
 .sub { color: var(--ink-2); font-size: 15px; margin: 0 0 32px; }
+.resume { background: var(--accent-soft); border: 1px solid #e6c4b6; border-radius: var(--radius); padding: 16px 18px; margin: 0 0 16px; }
+.resume-title { font-size: 13px; font-weight: 600; color: var(--accent); margin: 0 0 4px; }
+.resume-who { margin: 0 0 12px; font-size: 15px; color: var(--ink-2); }
+.resume-who strong { font-family: var(--serif); font-size: 19px; color: var(--ink); font-weight: 800; }
+.resume-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.ctrl.home { font-weight: 600; margin-right: 4px; }
 .year-picker {
   background: #fff; border: 1px solid var(--line); border-radius: var(--radius);
   padding: 16px 18px; margin: 0 0 24px;
@@ -199,6 +213,43 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .side-note { font-size: 12px; color: var(--ink-3); margin: 8px 0 0; }
 .side-meta .side-row { font-size: 13px; }
 
+/* 시작 화면 오른쪽: 남한 지도와 인구 분포표 */
+.pop h3 { display: flex; align-items: center; gap: 6px; }
+.pop-kind { font-size: 10.5px; letter-spacing: 0; color: var(--ink-3); border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; font-weight: 500; }
+.pop-total { font-size: 13px; color: var(--ink-2); margin: 0 0 6px; }
+.pop-total b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.pop-map { display: block; width: 100%; height: auto; margin: 0 auto; }
+.pop-region { fill: var(--blue); stroke: #fff; stroke-width: .6; stroke-linejoin: round; transition: fill .15s ease; }
+.pop-region.focus { fill: var(--accent); }
+.pop-birth { fill: #fff; stroke: var(--accent); stroke-width: 1.6; }
+.pop-pin path { fill: var(--accent); }
+.pop-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 11.5px; color: var(--ink-3); margin: 4px 0 10px; }
+.pop-key { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: -1px; }
+.pop-legend .pop-key:not(:first-child) { margin-left: 6px; }
+.pop-key.pin { background: var(--accent); }
+.pop-key.birth { background: #fff; border: 1.6px solid var(--accent); }
+.pop-key.shade { border-radius: 2px; background: linear-gradient(90deg, var(--blue-soft), var(--blue)); }
+.pop-table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.pop-table th, .pop-table td { padding: 3px 4px; text-align: right; font-weight: 400; }
+.pop-table thead th { font-size: 11px; color: var(--ink-3); border-bottom: 1px solid var(--line); }
+.pop-table th:first-child { text-align: left; padding-left: 0; }
+.pop-table tbody th { color: var(--ink-2); }
+.pop-table tbody tr + tr > * { border-top: 1px dashed var(--line); }
+.pop-table tr.home th, .pop-table tr.home td { color: var(--accent); font-weight: 600; }
+.pop-table tr.focus { background: var(--paper); }
+.pop-share { position: relative; width: 44%; }
+.pop-bar { position: absolute; left: 4px; top: 50%; height: 6px; margin-top: -3px; background: var(--blue-soft); border-radius: 3px; }
+.pop-table tr.home .pop-bar { background: var(--accent-soft); }
+.pop-num { position: relative; }
+.pop-ages { display: flex; height: 10px; border-radius: 5px; overflow: hidden; margin: 2px 0 6px; }
+.pop-age.a0, .pop-key.a0 { background: #9fb6cf; }
+.pop-age.a1, .pop-key.a1 { background: var(--blue); }
+.pop-age.a2, .pop-key.a2 { background: var(--accent); }
+.pop-age-legend { display: grid; grid-template-columns: repeat(3, auto); justify-content: space-between; gap: 4px; margin: 0; font-size: 11.5px; }
+.pop-age-legend div { display: flex; flex-direction: column; }
+.pop-age-legend dt { color: var(--ink-3); }
+.pop-age-legend dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+
 .log { padding-top: 12px; }
 .yr {
   display: grid; grid-template-columns: 64px 1fr; gap: 12px;
@@ -345,6 +396,43 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .bm-pin-head { fill: var(--ink); stroke: var(--paper); stroke-width: 1.2; }
 .bm-pulse { fill: var(--accent); opacity: .35; transform-origin: center; transform-box: fill-box; animation: bm-pulse 1.4s ease-out infinite; }
 .bm-skip { margin-top: 8px; }
+.bm-stage { display: flex; flex-direction: column; align-items: center; width: 100%; flex: 1 1 auto; min-height: 0; }
+
+/* 멈춘 뒤: 지도는 작아지고 출생 카드가 나온다. 넓은 화면은 왼쪽 지도, 오른쪽 카드 */
+.birth-map.landed { overflow: visible; max-width: 1060px; padding-bottom: 48px; }
+.birth-map.landed .bm-stage { flex: none; }
+.birth-map.landed .bm-svg { flex: none; max-height: 40vh; }
+@media (min-width: 960px) {
+  .birth-map.landed { flex-direction: row; align-items: flex-start; justify-content: center; gap: 48px; padding-top: 48px; }
+  .birth-map.landed .bm-stage { position: sticky; top: 48px; flex: 1 1 0; max-width: 460px; }
+  .birth-map.landed .bm-svg { max-height: calc(100dvh - 220px); }
+}
+
+.birth-card {
+  width: 100%; max-width: 520px; text-align: left; margin-top: 12px;
+  background: #fff; border: 1px solid var(--line); border-radius: var(--radius); padding: 24px 22px;
+  animation: bm-rise .5s .3s ease both;
+}
+.birth-card .eyebrow { margin-bottom: 4px; }
+.bc-name { font-family: var(--serif); font-size: 34px; font-weight: 800; margin: 0; }
+.bc-where { margin: 4px 0 0; font-weight: 600; }
+.bc-who { margin: 2px 0 0; color: var(--ink-2); font-size: 14px; }
+.birth-card section { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 12px; }
+.birth-card h3 { font-size: 13px; letter-spacing: .08em; color: var(--accent); margin: 0 0 6px; }
+.bc-rows { margin: 0; }
+.bc-rows div { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: 14px; }
+.bc-rows div + div { border-top: 1px dashed var(--line); }
+.bc-rows dt { color: var(--ink-3); flex-shrink: 0; }
+.bc-rows dd { margin: 0; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+.bc-events, .bc-born { list-style: none; padding: 0; margin: 0; font-size: 14.5px; }
+.bc-events li { padding: 4px 0; display: flex; gap: 8px; align-items: baseline; }
+.bc-tag { flex: none; font-size: 11px; font-weight: 700; color: var(--accent); background: var(--accent-soft); border-radius: 4px; padding: 1px 6px; }
+.bc-tag.world { color: var(--blue); background: var(--blue-soft); }
+.bc-born { display: flex; flex-wrap: wrap; gap: 6px; }
+.bc-born li { background: var(--paper); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; font-size: 13.5px; }
+.bc-note { font-size: 12px; color: var(--ink-3); margin: 14px 0 0; }
+.bc-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+.bc-actions .btn-primary { flex: 1 1 100%; }
 @keyframes bm-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @keyframes bm-drop { from { opacity: 0; transform: translateY(-14px); } to { opacity: 1; transform: none; } }
 @keyframes bm-pulse { from { transform: scale(.4); opacity: .5; } to { transform: scale(1.8); opacity: 0; } }

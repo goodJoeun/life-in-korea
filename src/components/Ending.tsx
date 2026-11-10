@@ -2,32 +2,13 @@
 
 import { useState } from 'react';
 import type { Summary } from '@/lib/engine';
+import { copyText } from './share';
 
 interface Props {
   summary: Summary;
   onAgain: () => void;
   onReview: () => void;
   onHome: () => void;
-}
-
-async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    document.body.appendChild(ta);
-    ta.select();
-    let ok = false;
-    try {
-      ok = document.execCommand('copy');
-    } catch {
-      ok = false;
-    }
-    ta.remove();
-    return ok;
-  }
 }
 
 export default function Ending({ summary: s, onAgain, onReview, onHome }: Props) {

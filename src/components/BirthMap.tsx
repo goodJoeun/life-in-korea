@@ -3,15 +3,22 @@
 /*
  * 태어나는 장면: 한반도 지도 위에서 시도가 룰렛처럼 돌다가, 태어난 곳에 멈춰 핀이 꽂힌다.
  * 태어날 곳은 이미 엔진이 정했다(그해 시도별 출생아 비중). 이 화면은 그것을 보여 주기만 한다.
+ * 멈춘 뒤에는 출생 카드를 보여 주고, '삶을 시작하기'를 눌러야 게임이 시작된다.
  */
 import { useEffect, useMemo, useState } from 'react';
+import { people } from '@/lib/birthCard';
 import { isRegionId, regionBirthWeights, regionFullName } from '@/lib/births';
+import type { Sex } from '@/lib/data';
 import { MAP_REGIONS, MAP_VIEWBOX, NORTH_KOREA_PATH } from '@/lib/koreaMap';
 import { at, BIRTHS } from '@/lib/timeline';
+import BirthCard from './BirthCard';
 
 interface Props {
   regionId: string;
   birthYear: number;
+  name: string;
+  sex: Sex;
+  familyLabel: string;
   onDone: () => void;
 }
 
@@ -19,7 +26,6 @@ const [, , VW, VH] = MAP_VIEWBOX.split(' ').map(Number);
 const HOPS = 18; // 멈추기 전까지 불이 옮겨 다니는 횟수
 const FIRST_DELAY = 60;
 const LAST_DELAY = 420;
-const HOLD_MS = 2200; // 멈춘 뒤 게임으로 넘어가기까지
 
 /** 불이 옮겨 다닐 순서: 무작위로 섞되 같은 곳이 연달아 나오지 않게, 마지막은 태어난 곳 */
 function hopOrder(target: string): string[] {
@@ -35,7 +41,7 @@ function hopOrder(target: string): string[] {
   return out;
 }
 
-export default function BirthMap({ regionId, birthYear, onDone }: Props) {
+export default function BirthMap({ regionId, birthYear, name, sex, familyLabel, onDone }: Props) {
   const order = useMemo(() => hopOrder(regionId), [regionId]);
   const [step, setStep] = useState(0);
   const landed = step >= order.length - 1;
@@ -56,24 +62,20 @@ export default function BirthMap({ regionId, birthYear, onDone }: Props) {
     return () => clearTimeout(id);
   }, [step, landed, order.length]);
 
-  // 멈춘 뒤 잠시 보여 주고 게임으로
-  useEffect(() => {
-    if (!landed) return;
-    const id = setTimeout(onDone, HOLD_MS);
-    return () => clearTimeout(id);
-  }, [landed, onDone]);
+  const land = () => setStep(order.length - 1);
 
-  // Enter·Space·Esc 로 건너뛰기
+  // 도는 동안 Enter·Space·Esc 로 바로 멈추기 (멈춘 뒤에는 카드의 '삶을 시작하기'로만 시작)
   useEffect(() => {
+    if (landed) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') {
         e.preventDefault();
-        onDone();
+        setStep(order.length - 1);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onDone]);
+  }, [landed, order.length]);
 
   // 멈추면 태어난 곳으로 다가간다
   const zoom = landed && target ? 2.1 : 1;
@@ -82,45 +84,48 @@ export default function BirthMap({ regionId, birthYear, onDone }: Props) {
 
   const fullName = isRegionId(regionId) ? regionFullName(regionId, birthYear) : (target?.name ?? '');
   const sameYearBirths = isRegionId(regionId) ? regionBirthWeights(birthYear)[regionId] * at(BIRTHS, birthYear) : 0;
-  const births = sameYearBirths >= 10000
-    ? `${(Math.round(sameYearBirths / 1000) / 10).toLocaleString('ko-KR')}만 명`
-    : `${(Math.max(100, Math.round(sameYearBirths / 100) * 100)).toLocaleString('ko-KR')}명`;
+  const births = people(sameYearBirths).replace(/^약 /, '');
 
   return (
-    <main className="screen birth-map" onClick={landed ? onDone : undefined}>
-      <p className="bm-year">{birthYear}년</p>
-      <h1 className={`bm-title${landed ? ' on' : ''}`} aria-live="polite">
-        {landed ? fullName : '어디에서 태어날까'}
-      </h1>
-      <p className={`bm-sub${landed ? ' on' : ''}`}>
-        {landed ? `그해 이곳에서 태어난 약 ${births} 가운데 한 명이었다.` : '그해 실제로 아이가 태어난 비율대로 정해집니다.'}
-      </p>
+    <main className={`screen birth-map${landed ? ' landed' : ''}`}>
+      <div className="bm-stage">
+        <p className="bm-year">{birthYear}년</p>
+        <h1 className={`bm-title${landed ? ' on' : ''}`} aria-live="polite">
+          {landed ? fullName : '어디에서 태어날까'}
+        </h1>
+        <p className={`bm-sub${landed ? ' on' : ''}`}>
+          {landed ? `그해 이곳에서 태어난 약 ${births} 가운데 한 명이었다.` : '그해 실제로 아이가 태어난 비율대로 정해집니다.'}
+        </p>
 
-      <svg className={`bm-svg${landed ? ' zoomed' : ''}`} viewBox={MAP_VIEWBOX} role="img" aria-label={landed ? `${fullName}에 핀이 꽂힌 한반도 지도` : '한반도 지도'}>
-        <g className="bm-world" style={{ transform: `translate(${tx}px, ${ty}px) scale(${zoom})` }}>
-          <path className="bm-north" d={NORTH_KOREA_PATH} />
-          {MAP_REGIONS.map((r) => (
-            <path
-              key={r.id}
-              d={r.d}
-              className={`bm-region${r.id === lit ? (landed ? ' home' : ' lit') : ''}${landed && r.id !== regionId ? ' dim' : ''}`}
-            />
-          ))}
-          {landed && target && (
-            <g transform={`translate(${target.cx} ${target.cy}) scale(${1 / zoom})`}>
-              <circle className="bm-pulse" r="10" />
-              <g className="bm-pin">
-                <path className="bm-pin-head" d="M0,0 C-2,-6 -8,-10 -8,-16 A8,8 0 1 1 8,-16 C8,-10 2,-6 0,0 Z" />
-                <circle cx="0" cy="-16" r="3" fill="var(--paper)" />
+        <svg className={`bm-svg${landed ? ' zoomed' : ''}`} viewBox={MAP_VIEWBOX} role="img" aria-label={landed ? `${fullName}에 핀이 꽂힌 한반도 지도` : '한반도 지도'}>
+          <g className="bm-world" style={{ transform: `translate(${tx}px, ${ty}px) scale(${zoom})` }}>
+            <path className="bm-north" d={NORTH_KOREA_PATH} />
+            {MAP_REGIONS.map((r) => (
+              <path
+                key={r.id}
+                d={r.d}
+                className={`bm-region${r.id === lit ? (landed ? ' home' : ' lit') : ''}${landed && r.id !== regionId ? ' dim' : ''}`}
+              />
+            ))}
+            {landed && target && (
+              <g transform={`translate(${target.cx} ${target.cy}) scale(${1 / zoom})`}>
+                <circle className="bm-pulse" r="10" />
+                <g className="bm-pin">
+                  <path className="bm-pin-head" d="M0,0 C-2,-6 -8,-10 -8,-16 A8,8 0 1 1 8,-16 C8,-10 2,-6 0,0 Z" />
+                  <circle cx="0" cy="-16" r="3" fill="var(--paper)" />
+                </g>
               </g>
-            </g>
-          )}
-        </g>
-      </svg>
+            )}
+          </g>
+        </svg>
 
-      <button className="btn-link bm-skip" onClick={onDone}>
-        {landed ? '시작하기' : '건너뛰기'}
-      </button>
+        {!landed && (
+          <button className="btn-link bm-skip" onClick={land}>
+            건너뛰기
+          </button>
+        )}
+      </div>
+      {landed && <BirthCard name={name} sex={sex} regionId={regionId} birthYear={birthYear} familyLabel={familyLabel} onStart={onDone} />}
     </main>
   );
 }

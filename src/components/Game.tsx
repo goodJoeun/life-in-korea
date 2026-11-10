@@ -5,8 +5,11 @@
  * 인생 자체(Life)는 엔진 객체라 ref 에 두고, 화면에 필요한 것만 state 로 옮겨 그린다.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createLife, type ChoiceView, type Life, type Snapshot, type Stats, type Summary, type YearResult } from '@/lib/engine';
-import { DEFAULT_YEAR_SECONDS, isYearSeconds, loadPastLives, loadPrefs, savePastLives, savePrefs, type PastLife, type YearSeconds } from '@/lib/storage';
+import { createLife, Life, type ChoiceView, type Snapshot, type Stats, type Summary, type YearResult } from '@/lib/engine';
+import {
+  clearSavedLife, DEFAULT_YEAR_SECONDS, isYearSeconds, loadPastLives, loadPrefs, loadSavedLife, savePastLives, savePrefs, saveLife,
+  type LifeAction, type PastLife, type SavedLife, type YearSeconds,
+} from '@/lib/storage';
 import { CURRENT_YEAR, MAX_BIRTH_YEAR, MIN_BIRTH_YEAR } from '@/lib/timeline';
 import BirthMap from './BirthMap';
 import ChoicePanel from './ChoicePanel';
@@ -19,6 +22,38 @@ import SidePanel from './SidePanel';
 type Phase = 'intro' | 'birth' | 'playing' | 'ending' | 'review';
 
 const ENDING_DELAY_MS = 1600;
+
+/** 한 해 결과를 생애 기록에 덧붙인다. 선택의 결과는 그해 기록에 이어 붙인다. */
+function mergeBlocks(prev: YearBlock[], res: YearResult): YearBlock[] {
+  if (!res.entries.length) return prev;
+  if (res.isChoiceResult && prev.length) {
+    const last = prev[prev.length - 1];
+    return [...prev.slice(0, -1), { ...last, entries: [...last.entries, ...res.entries] }];
+  }
+  return [...prev, { id: prev.length, age: res.age, year: res.year, entries: res.entries }];
+}
+
+/**
+ * 저장된 생을 같은 씨앗값으로 처음부터 다시 돌려 되살린다.
+ * 엔진 코드가 바뀌어 동작이 맞지 않게 되면(선택지가 없는데 선택 등) 거기서 멈춘다.
+ */
+function replay(saved: SavedLife) {
+  const life = createLife({ seed: saved.seed, birthYear: saved.birthYear });
+  let res = life.start();
+  let blocks = mergeBlocks([], res);
+  let prev: Snapshot | null = null;
+  const actions: LifeAction[] = [];
+  for (const a of saved.actions) {
+    if (!life.alive) break;
+    const p = life.pending;
+    if (a === 'n' ? p : !p || (typeof a === 'number' && (a < 0 || a >= p.options.length))) break;
+    prev = res.snapshot;
+    res = a === 'n' ? life.next() : life.choose(a === 'a' ? life.autoChoiceIndex() : a);
+    blocks = mergeBlocks(blocks, res);
+    actions.push(a);
+  }
+  return { life, res, blocks, prev, actions };
+}
 
 export default function Game() {
   const lifeRef = useRef<Life | null>(null);
@@ -36,6 +71,23 @@ export default function Game() {
   const [auto, setAutoState] = useState(false);
   const [pastLives, setPastLives] = useState<PastLife[]>([]);
   const [birthYear, setBirthYearState] = useState<number>(CURRENT_YEAR);
+  /** 지금 인생에서 지금까지 한 동작 (저장·되살리기용) */
+  const actionsRef = useRef<LifeAction[]>([]);
+  const [saved, setSaved] = useState<SavedLife | null>(null);
+
+  // 개발 중 핫 리로드: engine.ts·events.ts·content.ts 등을 고치면 Fast Refresh 가 새 Life 클래스를 가져오지만,
+  // 진행 중인 인생은 ref 에 든 옛 클래스 객체라 그대로 옛 코드로 돈다. 프로토타입만 새 클래스로 바꿔 끼워
+  // 나이·가족·재산은 그대로 두고 다음 해부터 고친 코드가 돌게 한다. (생성자에서 새로 만든 필드는 새 인생부터)
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'production') return;
+    const life = lifeRef.current;
+    if (!life || Object.getPrototypeOf(life) === Life.prototype) return;
+    Object.setPrototypeOf(life, Life.prototype);
+    const s = life.snapshot();
+    snapRef.current = s;
+    setSnap(s);
+    console.info('[핫 리로드] 진행 중인 인생에 고친 엔진 코드를 적용했다.');
+  });
 
   // 저장된 설정과 지난 생 불러오기 (브라우저에서만)
   useEffect(() => {
@@ -44,6 +96,7 @@ export default function Game() {
     if (prefs.auto) setAutoState(true);
     if (prefs.birthYear && prefs.birthYear >= MIN_BIRTH_YEAR && prefs.birthYear <= MAX_BIRTH_YEAR) setBirthYearState(prefs.birthYear);
     setPastLives(loadPastLives());
+    setSaved(loadSavedLife());
   }, []);
 
   const setYearSeconds = useCallback((s: YearSeconds) => {
@@ -67,19 +120,17 @@ export default function Game() {
     snapRef.current = res.snapshot;
     setSnap(res.snapshot);
     if (res.entries.length) {
-      setBlocks((prev) => {
-        if (res.isChoiceResult && prev.length) {
-          const last = prev[prev.length - 1];
-          return [...prev.slice(0, -1), { ...last, entries: [...last.entries, ...res.entries] }];
-        }
-        return [...prev, { id: prev.length, age: res.age, year: res.year, entries: res.entries }];
-      });
+      setBlocks((prev) => mergeBlocks(prev, res));
     }
     setChoice(res.choice);
     if (res.dead) setDead(true);
   }, []);
 
   const start = useCallback(() => {
+    // 새로 태어나면 저장해 둔 생은 지운다
+    clearSavedLife();
+    setSaved(null);
+    actionsRef.current = [];
     const life = createLife({ birthYear });
     lifeRef.current = life;
     snapRef.current = null;
@@ -104,6 +155,7 @@ export default function Game() {
     (i: number) => {
       const life = lifeRef.current;
       if (!life || !life.pending || i < 0 || i >= life.pending.options.length) return;
+      actionsRef.current.push(i);
       applyResult(life.choose(i));
     },
     [applyResult],
@@ -114,14 +166,73 @@ export default function Game() {
     const life = lifeRef.current;
     if (!life || !life.alive) return;
     if (life.pending) {
-      pick(life.autoChoiceIndex());
+      // 운에 맡긴 선택은 난수를 쓰므로 직접 고른 선택과 따로 남긴다
+      actionsRef.current.push('a');
+      applyResult(life.choose(life.autoChoiceIndex()));
       return;
     }
     let res = life.next();
+    actionsRef.current.push('n');
     // 아무 일도 없던 해는 몰아서 넘긴다
-    for (let guard = 0; !res.entries.length && !res.choice && !res.dead && guard < 3; guard++) res = life.next();
+    for (let guard = 0; !res.entries.length && !res.choice && !res.dead && guard < 3; guard++) {
+      res = life.next();
+      actionsRef.current.push('n');
+    }
     applyResult(res);
-  }, [applyResult, pick]);
+  }, [applyResult]);
+
+  // 진행 중인 생을 저장한다 (해가 바뀔 때마다, 홈으로 갈 때)
+  const persist = useCallback((): SavedLife | null => {
+    const life = lifeRef.current;
+    const s = snapRef.current;
+    if (!life || !life.alive || !s) return null;
+    const data: SavedLife = {
+      v: 1, seed: life.seed, birthYear: life.birthYear, actions: [...actionsRef.current],
+      name: s.name, age: s.age, year: s.year, at: Date.now(),
+    };
+    saveLife(data);
+    return data;
+  }, []);
+
+  useEffect(() => {
+    if ((phase === 'playing' || phase === 'birth') && !dead) persist();
+  }, [snap, phase, dead, persist]);
+
+  const goHome = useCallback(() => {
+    setSaved(persist());
+    setSideOpen(false);
+    setPhase('intro');
+    window.scrollTo(0, 0);
+  }, [persist]);
+
+  // 이어서 하기: 이번 접속에서 홈으로 나왔던 생이면 그대로, 새로 고침 뒤라면 저장된 동작을 다시 돌려 되살린다
+  const resume = useCallback(() => {
+    if (!saved) return;
+    const cur = lifeRef.current;
+    if (!(cur && cur.alive && cur.seed === saved.seed && snapRef.current)) {
+      const r = replay(saved);
+      lifeRef.current = r.life;
+      actionsRef.current = r.actions;
+      snapRef.current = r.res.snapshot;
+      setSnap(r.res.snapshot);
+      setPrevStats(r.prev ? r.prev.stats : null);
+      setBlocks(r.blocks);
+      setChoice(r.res.choice);
+      setDead(r.res.dead);
+      setSummary(null);
+      setPaused(false);
+    }
+    setSideOpen(false);
+    setPhase('playing');
+    requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
+  }, [saved]);
+
+  const discardSaved = useCallback(() => {
+    clearSavedLife();
+    setSaved(null);
+    lifeRef.current = null;
+    actionsRef.current = [];
+  }, []);
 
   // 진행 타이머. 한 해(1년 = yearSeconds 초)가 흐르는 정도를 progress(0~1)로 쌓고, 다 차면 다음 해로 넘긴다.
   // 멈추거나 선택을 기다리는 동안에는 쌓지 않아서, 다시 움직이면 멈췄던 자리부터 이어진다.
@@ -171,6 +282,8 @@ export default function Game() {
     if (!dead || phase !== 'playing' || !lifeRef.current) return;
     const s = lifeRef.current.summary();
     setSummary(s);
+    clearSavedLife();
+    setSaved(null);
     const t = setTimeout(() => {
       const lives = [{ name: s.name, region: s.region, age: s.age, cause: s.cause, first: s.lines[0], at: Date.now(), birthYear: s.birthYear }, ...loadPastLives()];
       savePastLives(lives);
@@ -224,12 +337,24 @@ export default function Game() {
         onStart={start}
         pastLives={pastLives}
         onClearPast={clearPast}
+        saved={saved}
+        onResume={resume}
+        onDiscardSaved={discardSaved}
       />
     );
   }
 
   if (phase === 'birth' && lifeRef.current) {
-    return <BirthMap regionId={lifeRef.current.region.id} birthYear={lifeRef.current.birthYear} onDone={beginLife} />;
+    return (
+      <BirthMap
+        regionId={lifeRef.current.region.id}
+        birthYear={lifeRef.current.birthYear}
+        name={snap.name}
+        sex={snap.sex}
+        familyLabel={snap.familyLabel}
+        onDone={beginLife}
+      />
+    );
   }
 
   if (phase === 'ending' && summary) {
@@ -263,6 +388,7 @@ export default function Game() {
         onTogglePause={() => setPaused((p) => !p)}
         onSkip={skip}
         onOpenSide={() => setSideOpen(true)}
+        onHome={goHome}
       />
       <div className="game-body">
         <div className="game-main">
