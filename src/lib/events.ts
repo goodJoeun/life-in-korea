@@ -5,10 +5,13 @@
  * LIFE_EVENTS    어른(19세~)이면 나이대와 상관없이 나올 수 있는 사건. 결혼·자녀·일 같은 형편에 따라 고른다.
  * DILEMMAS       가끔 나오는 작은 갈림길. 고른 뒤 결과는 확률을 따른다.
  *
- * 필드: ages [최소, 최대] 나이 · from/to 달력 연도 · born [최소, 최대] 출생연도(세대) · when 형편 조건
- *       fx 수치 변화 (cash 는 만원, 2024년 가치)
- * 문장은 과거형 일기체로 담담하게. 시대가 있는 문장에는 from/to 를, 세대가 있는 문장에는 born 을 꼭 붙인다.
- * (예: 노년에 스마트폰을 처음 배우는 건 1965년생 이전 세대. claude/realism/SKILL.md)
+ * 필드: ages [최소, 최대] 나이 · from/to 달력 연도 · bornFrom/bornTo 태어난 해 · when 형편 조건 · fx 수치 변화 (cash 는 만원, 2024년 가치)
+ * 문장은 과거형 일기체로 담담하게. 시대가 있는 문장에는 from/to 를 꼭 붙인다.
+ *
+ * from/to 는 "그해에 그런 일이 있었나", bornFrom/bornTo 는 "그 세대가 그런 일을 겪을 만한가"를 본다.
+ * 노인이 스마트폰을 처음 배우거나 키오스크 앞에서 헤매는 일은 2020년대에 일흔이 넘은 세대의 이야기다.
+ * 1990년대생은 2070년에 노인이 돼도 그런 일을 겪지 않으므로 bornTo 로 막고, 같은 자리에 그 세대다운 사건을 둔다.
+ * (claude/realism/SKILL.md, scripts/test.ts 의 시대 검사)
  */
 import type { Effect, Stage } from './content';
 import type { Life } from './engine';
@@ -20,12 +23,32 @@ export interface RandomEvent {
   ages?: [number, number];
   from?: number;
   to?: number;
-  /** 이 출생연도 사이에 태어난 사람에게만 (세대가 있는 문장) */
-  born?: [number, number];
+  /** 이 해 이후에 태어난 사람만 */
+  bornFrom?: number;
+  /** 이 해까지 태어난 사람만 */
+  bornTo?: number;
+  /** 사건이 일어난 뒤 남길 상태 (연애 시작, 반려동물, 첫 차 등). 뒤따르는 사건의 when 이 이 상태를 본다 */
+  then?: (life: Life) => void;
 }
 
-/** 갈림길의 결과 하나: [확률 가중치, 문장, 변화] */
-export type Outcome = [number, string, Effect];
+/** 갈림길의 결과 하나: [확률 가중치, 문장, 변화, 남길 상태] */
+export type Outcome = [number, string, Effect, ((life: Life) => void)?];
+
+/**
+ * 집안 형편이 바뀌는 사건. dir 1 은 한 칸 오름, -1 은 한 칸 내림.
+ * 엔진이 그해 경기(timeline.ts 의 FORTUNE_UP/DOWN)로 오를지 내릴지 정한 뒤 이 목록에서 맞는 문장을 고른다.
+ */
+export interface FortuneEvent {
+  text: string;
+  dir: 1 | -1;
+  fx?: Effect;
+  when?: (life: Life) => boolean;
+  ages?: [number, number];
+  from?: number;
+  to?: number;
+  bornFrom?: number;
+  bornTo?: number;
+}
 export interface DilemmaOption {
   label: string;
   desc?: string;
@@ -40,7 +63,8 @@ export interface Dilemma {
   ages: [number, number];
   from?: number;
   to?: number;
-  born?: [number, number];
+  bornFrom?: number;
+  bornTo?: number;
 }
 
 // ───────── 형편 조건 ─────────
@@ -59,7 +83,40 @@ const city = (s: Life) => s.residence.group !== 'province';
 const parentsAlive = (s: Life) => !s.flags.parentsGone;
 const renter = (s: Life) => !s.house && s.independent;
 const male = (s: Life) => s.sex === 'M';
+const female = (s: Life) => s.sex === 'F';
+const hasKids = (s: Life) => s.children.length > 0;
+const grand = (s: Life) => !!s.flags.grandchild;
 const and = (...fs: ((s: Life) => boolean)[]) => (s: Life) => fs.every((f) => f(s));
+/** 한 번도 결혼하지 않았다 (이혼·사별은 아님) */
+const neverWed = (s: Life) => !s.spouse;
+// 연애: 사귀는 사람이 있어야 헤어질 수 있다
+const dating = (s: Life) => s.flags.dating !== undefined;
+const notDating = (s: Life) => !s.married && s.flags.dating === undefined;
+const datingFor = (min: number, max = 99) => (s: Life) => s.flags.dating !== undefined && s.age - s.flags.dating >= min && s.age - s.flags.dating <= max;
+const startDating = (s: Life) => { s.flags.dating = s.age; };
+const breakUp = (s: Life) => { s.flags.dating = undefined; };
+// 반려동물·차·휴대폰: "처음"과 "떠나보냄"이 앞뒤가 맞게
+const noPet = (s: Life) => s.flags.pet === undefined;
+const petFor = (min: number) => (s: Life) => s.flags.pet !== undefined && s.age - s.flags.pet >= min;
+const getPet = (s: Life) => { s.flags.pet = s.age; };
+const noCar = (s: Life) => !s.flags.car;
+const hasCar = (s: Life) => !!s.flags.car;
+const getCar = (s: Life) => { s.flags.car = true; };
+const noPhone = (s: Life) => !s.flags.phone;
+const getPhone = (s: Life) => { s.flags.phone = true; };
+// 자녀: 결혼·대학 여부를 엔진과 맞춘다
+const kidAge = (s: Life, c: { bornAge: number }) => s.age - c.bornAge;
+const unwedChild = (min: number, max: number) => (s: Life) => s.children.some((c) => !c.married && !c.single && kidAge(s, c) >= min && kidAge(s, c) <= max);
+const markChild = (min: number, max: number, key: 'married' | 'single') => (s: Life) => {
+  const c = s.children.find((x) => !x.married && !x.single && kidAge(s, x) >= min && kidAge(s, x) <= max);
+  if (c) c[key] = true;
+};
+const childInCollege = (s: Life) => s.children.some((c) => c.college && kidAge(s, c) >= 19 && kidAge(s, c) <= 23);
+const grownKids = (s: Life) => s.children.some((c) => kidAge(s, c) >= 22);
+const noKidsAtHome = (s: Life) => !s.children.some((c) => kidAge(s, c) < 20);
+/** 첫 직장에 들어간 지 1년 안 */
+const firstPay = (s: Life) => working(s) && s.job!.since !== undefined && s.age - s.job!.since <= 1
+  && Object.values(s.careerYears).reduce((a, b) => a + (b ?? 0), 0) <= 1;
 
 export const RANDOM_EVENTS: Record<Stage, RandomEvent[]> = {
   // ───────── 0~6세 ─────────
@@ -97,6 +154,17 @@ export const RANDOM_EVENTS: Record<Stage, RandomEvent[]> = {
     { text: '유튜브로 동요를 들으며 자랐다.', fx: { happiness: 2 }, from: 2012 },
     { text: '마스크를 쓰고 어린이집에 다녔다.', fx: { relation: -1 }, from: 2020, to: 2022 },
     { text: '태블릿으로 그림을 그리며 놀았다.', fx: { happiness: 2 }, from: 2014 },
+    // 시대별 놀이와 TV
+    { text: '아침마다 확성기에서 새마을 노래가 흘러나왔다.', fx: { happiness: 1 }, from: 1971, to: 1979, when: rural },
+    { text: '골목에서 구슬치기를 하다 손등이 텄다.', fx: { happiness: 2, relation: 1 }, to: 1990, ages: [5, 6] },
+    { text: '「뽀뽀뽀」를 보며 율동을 따라 했다.', fx: { happiness: 2 }, from: 1981, to: 2007, ages: [2, 6] },
+    { text: '호돌이 인형을 끌어안고 잤다.', fx: { happiness: 2 }, from: 1986, to: 1989, ages: [2, 6] },
+    { text: '올림픽 개막식을 보고 동네 형들을 따라 굴렁쇠를 굴렸다.', fx: { happiness: 2, health: 1 }, from: 1988, to: 1989, ages: [4, 6] },
+    { text: '「텔레토비」를 보며 "아이 좋아"를 따라 했다.', fx: { happiness: 2 }, from: 1998, to: 2003, ages: [1, 5] },
+    { text: '「뽀로로」 노래를 하루 종일 흥얼거렸다.', fx: { happiness: 2 }, from: 2004, to: 2035, ages: [1, 6] },
+    { text: '변신 로봇 장난감을 사 달라고 마트 바닥에 드러누웠다.', fx: { happiness: -1, relation: -1 }, from: 2014, ages: [3, 6] },
+    { text: '「아기상어」 노래에 맞춰 손뼉을 쳤다.', fx: { happiness: 2 }, from: 2016, to: 2024, ages: [1, 5] },
+    { text: '엄마 손을 잡고 문화센터 유아 수업에 다녔다.', fx: { happiness: 2, relation: 1 }, from: 2000, ages: [1, 4] },
   ],
 
   // ───────── 7~12세 ─────────
@@ -140,12 +208,32 @@ export const RANDOM_EVENTS: Record<Stage, RandomEvent[]> = {
     { text: '다마고치를 키우다 수업 시간에 압수당했다.', fx: { happiness: 2 }, from: 1997, to: 1999 },
     { text: '포켓몬 스티커를 모으려고 빵을 사 먹었다.', fx: { happiness: 3 }, from: 1999, to: 2001 },
     { text: '스타크래프트를 하느라 밤을 샜다.', fx: { happiness: 3, ability: -1 }, from: 1998, to: 2005, ages: [10, 12] },
-    { text: '처음으로 휴대폰을 갖게 됐다.', fx: { happiness: 3 }, from: 2004, to: 2009, ages: [10, 12] },
+    { text: '처음으로 휴대폰을 갖게 됐다.', fx: { happiness: 3 }, from: 2004, to: 2009, ages: [10, 12], when: noPhone, then: getPhone },
     { text: '처음으로 스마트폰을 갖게 됐다.', fx: { happiness: 3, ability: -1 }, from: 2010, ages: [9, 12] },
     { text: '방과 후 돌봄교실에서 부모님을 기다렸다.', fx: { relation: 1 }, from: 2004, ages: [7, 9] },
     { text: '학원 버스를 타고 학원 세 곳을 돌았다.', fx: { ability: 2, happiness: -2 }, from: 2000, when: (s) => s.quintile >= 3 },
     { text: '코로나19로 1년 내내 온라인 수업을 들었다.', fx: { relation: -3, ability: -1 }, from: 2020, to: 2021 },
     { text: '마인크래프트로 친구들과 마을을 지었다.', fx: { happiness: 3, relation: 2 }, from: 2013, to: 2035 },
+    // 시대별 학교와 놀이
+    { text: '국민교육헌장을 다 외우지 못해 남아서 외웠다.', fx: { happiness: -1, ability: 1 }, from: 1968, to: 1993 }, // 1968년 선포, 1994년 교과서에서 빠졌다
+    { text: '한 반에 예순 명이 넘어 오전반과 오후반으로 나눠 학교에 다녔다.', fx: { relation: 1 }, to: 1995, ages: [7, 9] },
+    { text: '웅변 학원에서 "이 연사 힘차게 외칩니다"를 외쳤다.', fx: { ability: 1 }, from: 1970, to: 1990 },
+    { text: '학교 앞에서 산 병아리가 며칠 만에 죽었다.', fx: { happiness: -2 }, to: 2005 },
+    { text: '프로야구 어린이 회원에 가입해 점퍼를 받았다. 한동안 벗지 않았다.', fx: { happiness: 4 }, from: 1982, to: 1985, when: city }, // 1982년 프로야구 출범
+    { text: '호돌이 배지를 가방에 달고 다녔다.', fx: { happiness: 2 }, from: 1986, to: 1988 },
+    { text: '「드래곤볼」 만화책을 반 아이들과 돌려 봤다.', fx: { happiness: 3, relation: 1 }, from: 1989, to: 1997, ages: [9, 12] },
+    { text: 'TV 종이접기 아저씨를 따라 학을 접었다.', fx: { happiness: 2 }, from: 1988, to: 2000, ages: [7, 10] },
+    { text: '"국민학교"가 "초등학교"로 이름이 바뀌었다. 입에 잘 붙지 않았다.', fx: { happiness: 1 }, from: 1996, to: 1996 }, // 1996년 3월 1일
+    { text: '쉬는 시간마다 탑블레이드 팽이를 돌렸다.', fx: { happiness: 3, relation: 1 }, from: 2001, to: 2004 },
+    { text: '유희왕 카드를 모으느라 용돈을 다 썼다.', fx: { happiness: 2 }, from: 2001, to: 2006 },
+    { text: '친구들과 카트라이더 대결을 벌였다.', fx: { happiness: 3, relation: 2 }, from: 2004, to: 2010 },
+    { text: '메이플스토리에서 밤늦게까지 사냥을 했다.', fx: { happiness: 3, health: -1 }, from: 2003, to: 2012, ages: [9, 12] },
+    { text: '닌텐도 DS를 생일 선물로 받았다.', fx: { happiness: 4 }, from: 2007, to: 2011, when: (s) => s.quintile >= 3 },
+    { text: '포켓몬고를 하러 부모님과 공원을 돌았다.', fx: { happiness: 3, health: 1, relation: 1 }, from: 2017, to: 2018 }, // 2017년 1월 국내 정식 출시
+    { text: '슬라임을 만들다 방바닥을 엉망으로 만들었다.', fx: { happiness: 2, relation: -1 }, from: 2017, to: 2019 },
+    { text: '쉬는 시간에 오징어 게임 놀이를 하다 선생님께 혼났다.', fx: { happiness: 1 }, from: 2021, to: 2022 },
+    { text: '포켓몬빵을 사려고 편의점 앞에서 기다렸다.', fx: { happiness: 2 }, from: 2022, to: 2022 },
+    { text: '정보 시간에 블록 코딩으로 게임을 만들었다.', fx: { ability: 1, happiness: 1 }, from: 2019, ages: [11, 12] },
   ],
 
   // ───────── 13~15세 ─────────
@@ -163,7 +251,7 @@ export const RANDOM_EVENTS: Record<Stage, RandomEvent[]> = {
     { text: '용돈을 모아 처음으로 운동화를 샀다.', fx: { happiness: 3 } },
     { text: '얼굴에 여드름이 잔뜩 났다.', fx: { happiness: -2 } },
     { text: '목소리가 갈라지기 시작했다.', fx: { happiness: -1 }, when: male },
-    { text: '집안 형편 때문에 학원을 그만뒀다.', fx: { happiness: -2, ability: -1 }, when: hard },
+    { text: '집안 형편 때문에 학원을 그만뒀다.', fx: { happiness: -2, ability: -1 }, when: (s) => hard(s) && !!s.flags.tutoring },
     { text: '만화방에서 하루 종일 만화책을 읽었다.', fx: { happiness: 3 }, to: 2010 },
     { text: '펜팔 친구와 편지를 주고받았다.', fx: { relation: 2, ability: 1 }, to: 1995 },
     { text: '학생주임에게 머리를 잘렸다.', fx: { happiness: -2 }, to: 2005 },
@@ -179,6 +267,22 @@ export const RANDOM_EVENTS: Record<Stage, RandomEvent[]> = {
     { text: '단톡방에서 친구들과 밤늦게까지 떠들었다.', fx: { relation: 2, health: -1 }, from: 2011 },
     { text: '자유학기제 동안 진로 체험을 다녔다.', fx: { ability: 1, happiness: 2 }, from: 2016 },
     { text: '숏폼 영상을 보다 새벽 2시를 넘겼다.', fx: { health: -2, happiness: 1 }, from: 2019 },
+    // 시대별 유행
+    { text: '좋아하는 배우 사진이 박힌 책받침을 모았다.', fx: { happiness: 2 }, from: 1982, to: 1995 },
+    { text: '라디오에서 나오는 노래를 공테이프에 녹음해 나만의 테이프를 만들었다.', fx: { happiness: 3 }, from: 1980, to: 1998 },
+    { text: '서태지와 아이들 노래에 맞춰 춤을 연습했다.', fx: { happiness: 3, relation: 1 }, from: 1992, to: 1996 },
+    { text: 'H.O.T 팬과 젝스키스 팬으로 반이 갈렸다.', fx: { happiness: 1, relation: -1 }, from: 1997, to: 2000 },
+    { text: '「슬램덩크」를 보고 농구공을 샀다.', fx: { health: 2, happiness: 2 }, from: 1992, to: 1998 },
+    { text: '버디버디로 밤늦게까지 친구들과 쪽지를 주고받았다.', fx: { relation: 2, health: -1 }, from: 2000, to: 2007 },
+    { text: '얼짱 각도를 연습하며 디카로 셀카를 찍었다.', fx: { happiness: 2 }, from: 2003, to: 2008 },
+    { text: '알 요금제를 다 써서 한 달 내내 문자를 아껴 보냈다.', fx: { happiness: -1 }, from: 2003, to: 2010 },
+    { text: '전자사전에 소설을 넣어 수업 시간에 몰래 읽었다.', fx: { happiness: 2, ability: -1 }, from: 2005, to: 2011 },
+    { text: '페이스북 담벼락에 친구들과 장난 글을 남겼다.', fx: { relation: 1, happiness: 1 }, from: 2010, to: 2015 },
+    { text: '롱패딩이 없으면 안 될 것 같아 부모님을 졸랐다.', fx: { happiness: 1, relation: -1 }, from: 2017, to: 2019 },
+    { text: '친구들과 마라탕 가게에 몰려갔다.', fx: { happiness: 2, relation: 2 }, from: 2018, to: 2025 },
+    { text: '숏폼 챌린지 영상을 친구들과 찍었다.', fx: { happiness: 2, relation: 2 }, from: 2019, to: 2030 },
+    { text: '친구들과 MBTI 결과를 비교하며 놀았다.', fx: { relation: 2 }, from: 2020, to: 2024 },
+    { text: '탕후루를 사 먹으려고 줄을 섰다.', fx: { happiness: 2 }, from: 2023, to: 2023 },
   ],
 
   // ───────── 16~18세 ─────────
@@ -203,30 +307,36 @@ export const RANDOM_EVENTS: Record<Stage, RandomEvent[]> = {
     { text: '학력고사 날짜를 책상에 붙여 놓고 하루하루 지웠다.', fx: { ability: 1 }, from: 1982, to: 1993 },
     { text: '인터넷 강의를 배속으로 돌려 들었다.', fx: { ability: 2 }, from: 2004 },
     { text: '공장에 다니는 친구들이 부러우면서도 안쓰러웠다.', fx: { happiness: -1 }, to: 1985, when: (s) => s.quintile >= 3 },
+    // 시대별 고교 생활
+    { text: '농구대잔치 결승을 보려고 반 아이들이 TV 앞에 모였다.', fx: { happiness: 3, relation: 2 }, from: 1992, to: 1997 },
+    { text: '첫 수학능력시험이 생겨 한 해에 시험을 두 번 치렀다.', fx: { happiness: -2, ability: 1 }, from: 1993, to: 1993, ages: [18, 18] }, // 1994학년도 수능은 8월·11월 두 번
+    { text: '야간 자율학습을 빼먹고 PC방에서 스타크래프트를 했다.', fx: { happiness: 3, ability: -1 }, from: 1999, to: 2006 },
+    { text: '수능 등급제 첫해라 점수가 아닌 등급만 받았다.', fx: { happiness: -2 }, from: 2007, to: 2007, ages: [18, 18] },
+    { text: 'EBS 연계 교재를 달달 외웠다.', fx: { ability: 1, happiness: -1 }, from: 2011 },
+    { text: '두발 규정이 풀려 처음으로 머리를 염색해 봤다.', fx: { happiness: 2 }, from: 2011 },
+    { text: '스터디 카페에서 밤늦게까지 공부했다.', fx: { ability: 1, health: -1 }, from: 2017 },
+    { text: '코로나19로 수학여행이 취소됐다.', fx: { happiness: -3 }, from: 2020, to: 2021 },
   ],
 
   // ───────── 19~29세 ─────────
   young: [
     { text: '자취를 시작했다.', fx: { happiness: 2 }, when: single, ages: [19, 29] },
-    { text: '연애를 시작했다.', fx: { happiness: 5, relation: 3 }, when: single },
-    { text: '오래 만난 사람과 헤어졌다.', fx: { happiness: -6 }, when: single },
     { text: '자격증을 하나 땄다.', fx: { ability: 3 } },
     { text: '친구 결혼식에서 축가를 불렀다.', fx: { relation: 3 }, ages: [24, 29] },
     { text: '번아웃이 왔다. 아무것도 하기 싫었다.', fx: { happiness: -6, health: -2 }, when: working },
     { text: '헬스장에 등록하고 석 달 동안 꾸준히 다녔다.', fx: { health: 4 }, from: 1990 },
     { text: '운전면허를 땄다.', fx: { ability: 2, happiness: 2 }, from: 1980 },
-    { text: '첫 차를 샀다. 중고였다.', fx: { happiness: 4, cash: -800 }, from: 1990, when: working, ages: [24, 29] },
+    { text: '첫 차를 샀다. 중고였다.', fx: { happiness: 4, cash: -800 }, from: 1990, when: and(working, noCar), ages: [24, 29], then: getCar },
     { text: '친구들과 밤새 술을 마시고 다음 날 하루를 버렸다.', fx: { happiness: 2, health: -2, relation: 2 } },
-    { text: '첫 월급으로 부모님께 내복을 사 드렸다.', fx: { relation: 3, happiness: 3 }, when: working, to: 2005 },
-    { text: '첫 월급으로 부모님께 용돈을 드렸다.', fx: { relation: 3, happiness: 3 }, when: working, from: 2006 },
+    { text: '첫 월급으로 부모님께 내복을 사 드렸다.', fx: { relation: 3, happiness: 3 }, when: and(firstPay, parentsAlive), to: 2005 },
+    { text: '첫 월급으로 부모님께 용돈을 드렸다.', fx: { relation: 3, happiness: 3 }, when: and(firstPay, parentsAlive), from: 2006 },
     { text: '돈이 없어 라면으로 한 달을 버텼다.', fx: { health: -2, happiness: -2 }, when: (s) => s.independent && s.quintile <= 3 },
     { text: '고향 친구들과 점점 연락이 뜸해졌다.', fx: { relation: -2 } },
     { text: '혼자 여행을 떠났다.', fx: { happiness: 4 }, from: 1985 },
     { text: '책 한 권이 인생을 바꿔 놓은 것 같았다.', fx: { ability: 2, happiness: 2 } },
     { text: '사람에게 크게 실망한 일이 있었다.', fx: { relation: -3, happiness: -2 } },
     { text: '부모님과 크게 다투고 한동안 연락을 끊었다.', fx: { relation: -4, happiness: -3 }, when: parentsAlive },
-    { text: '동창 결혼 소식을 듣고 괜히 마음이 싱숭생숭했다.', fx: { happiness: -1 }, when: single, ages: [26, 29] },
-    { text: '소개팅에 나갔지만 두 번 만나고 끝났다.', fx: { happiness: -1 }, when: single },
+    { text: '동창 결혼 소식을 듣고 괜히 마음이 싱숭생숭했다.', fx: { happiness: -1 }, when: and(neverWed, notDating), ages: [26, 29] },
     { text: '직장 선배에게 일을 제대로 배웠다.', fx: { ability: 3, relation: 2 }, when: office },
     { text: '실수로 큰 거래처를 놓쳐 크게 혼났다.', fx: { happiness: -4, ability: 1 }, when: office },
     { text: '회식 자리가 너무 잦았다.', fx: { health: -2, relation: 1 }, when: office, to: 2015 },
@@ -248,7 +358,7 @@ export const RANDOM_EVENTS: Record<Stage, RandomEvent[]> = {
     { text: '어학연수를 다녀왔다.', fx: { ability: 3, happiness: 3 }, when: and(inCollege, wellOff), from: 1995 },
     { text: '공장 기숙사에서 동료들과 함께 지냈다.', fx: { relation: 3, health: -1 }, when: (s) => s.job?.type === 'sme' && s.edu !== null && ['elementary', 'middle', 'highschool'].includes(s.edu), to: 1995 },
     { text: '야간 학교를 다니며 공부를 이어 갔다.', fx: { ability: 3, health: -2 }, when: (s) => working(s) && (s.edu === 'elementary' || s.edu === 'middle'), to: 1995 },
-    { text: '고향에 계신 부모님께 다달이 돈을 부쳤다.', fx: { relation: 3, cash: -200 }, when: and(working, hard), to: 2000 },
+    { text: '고향에 계신 부모님께 다달이 돈을 부쳤다.', fx: { relation: 3, cash: -200 }, when: and(working, hard, parentsAlive), to: 2000 },
     { text: '통금 시간에 쫓겨 친구 집에서 밤을 보냈다.', fx: { happiness: 2, relation: 2 }, to: 1981 },
     { text: '다방에서 친구들과 음악을 신청해 들었다.', fx: { happiness: 3, relation: 2 }, to: 1990 },
     { text: '버스 안내양에게 회수권을 내고 만원 버스에 매달렸다.', fx: { happiness: -1 }, to: 1988 },
@@ -256,15 +366,31 @@ export const RANDOM_EVENTS: Record<Stage, RandomEvent[]> = {
     { text: '노래방이 처음 생겨 친구들과 몰려갔다.', fx: { happiness: 3, relation: 2 }, from: 1991, to: 1994 },
     { text: 'PC통신 동호회에서 사람들을 만났다.', fx: { relation: 3 }, from: 1990, to: 2001 },
     { text: '공중전화 앞에 줄을 서서 삐삐 음성을 확인했다.', fx: { happiness: 1 }, from: 1993, to: 1999 },
-    { text: '처음으로 휴대폰을 샀다.', fx: { happiness: 3, cash: -50 }, from: 1997, to: 2003 },
+    { text: '처음으로 휴대폰을 샀다.', fx: { happiness: 3, cash: -50 }, from: 1997, to: 2003, bornTo: 1982, when: noPhone, then: getPhone },
     { text: '월드컵 거리 응원에 나가 목이 쉬도록 소리쳤다.', fx: { happiness: 5, relation: 2 }, from: 2002, to: 2002 },
     { text: '첫 해외여행을 다녀왔다.', fx: { happiness: 5, cash: -150 }, from: 1989 },
     { text: '배낭 하나 메고 유럽을 돌았다.', fx: { happiness: 5, ability: 1, cash: -300 }, from: 1992 },
     { text: '주식 앱을 깔고 매일 들여다봤다.', fx: { happiness: -1 }, from: 2015, when: working },
     { text: '가상화폐에 넣은 돈이 반토막 났다.', fx: { happiness: -4, cash: -300 }, from: 2018, to: 2022, when: working },
     { text: '재택근무로 출퇴근 시간이 사라졌다.', fx: { happiness: 3 }, from: 2020, to: 2022, when: office },
-    { text: '취업 준비가 길어져 부모님 얼굴 보기가 미안했다.', fx: { happiness: -4 }, when: (s) => !working(s) && s.age >= 25, from: 1998 },
+    { text: '취업 준비가 길어져 부모님 얼굴 보기가 미안했다.', fx: { happiness: -4 }, when: (s) => !working(s) && s.age >= 25 && parentsAlive(s) && !s.flags.homemaker && !s.lastWork, from: 1998 },
     { text: '원룸 월세가 월급의 3분의 1이었다.', fx: { happiness: -2 }, when: and(renter, city), from: 2010 },
+    // 시대별 청춘
+    { text: '장발 단속에 걸려 파출소에서 머리를 잘렸다.', fx: { happiness: -3 }, from: 1970, to: 1979, when: male },
+    { text: '경찰이 치마 길이를 자로 재며 붙잡았다.', fx: { happiness: -3 }, from: 1971, to: 1979, when: female },
+    { text: '통기타를 메고 친구들과 강촌으로 엠티를 갔다.', fx: { happiness: 3, relation: 3 }, from: 1970, to: 1988 },
+    { text: '프로야구가 생겨 처음으로 야구장에 가 봤다.', fx: { happiness: 3, relation: 1 }, from: 1982, to: 1983 },
+    { text: '서울 올림픽 자원봉사자로 일했다.', fx: { relation: 3, happiness: 3, ability: 1 }, from: 1988, to: 1988 },
+    { text: '첫 여권을 만들려고 하루 동안 소양 교육을 받았다.', fx: { happiness: -1 }, from: 1989, to: 1992 }, // 1989년 1월 해외여행 전면 자유화
+    { text: '천리안 채팅방에서 만난 사람들과 정모에 나갔다.', fx: { relation: 3, happiness: 2 }, from: 1990, to: 2000 },
+    { text: '싸이월드 도토리를 사서 미니홈피 배경음악을 바꿨다.', fx: { happiness: 2 }, from: 2003, to: 2010 },
+    { text: '「무한도전」을 보려고 토요일 저녁 약속을 미뤘다.', fx: { happiness: 2 }, from: 2006, to: 2018 },
+    { text: '포켓몬고를 하러 친구들과 속초까지 다녀왔다.', fx: { happiness: 4, relation: 2, cash: -10 }, from: 2016, to: 2016 }, // 정식 출시 전 속초에서만 잡혔다
+    { text: '"욜로"를 외치며 적금을 깨 여행을 떠났다.', fx: { happiness: 4, cash: -200 }, from: 2016, to: 2018, ages: [22, 29] },
+    { text: '혼밥, 혼술이 오히려 편했다.', fx: { happiness: 1 }, from: 2015, when: single },
+    { text: '친구들과 즉석 사진관에서 네 컷 사진을 찍었다.', fx: { happiness: 2, relation: 2 }, from: 2018, to: 2030 },
+    { text: '바디프로필을 찍겠다며 석 달 동안 닭가슴살만 먹었다.', fx: { health: 1, happiness: -1, cash: -50 }, from: 2019, to: 2023 },
+    { text: '소개팅 자리에서 서로 MBTI부터 물었다.', fx: { happiness: 1 }, from: 2020, to: 2024, when: notDating },
   ],
 
   // ───────── 30~54세 ─────────
@@ -285,7 +411,7 @@ export const RANDOM_EVENTS: Record<Stage, RandomEvent[]> = {
     { text: '눈이 침침해져 안과에 다니기 시작했다.', fx: { health: -1 }, ages: [42, 54] },
     { text: '마라톤 10킬로미터를 완주했다.', fx: { health: 4, happiness: 3 }, from: 1995 },
     { text: '명절마다 고향 가는 길이 열 시간 넘게 걸렸다.', fx: { happiness: -2, relation: 1 }, to: 2005, when: city },
-    { text: '명절에 친척들이 모여 앉아 결혼은 언제 하느냐고 물었다.', fx: { happiness: -3 }, when: single, ages: [30, 40] },
+    { text: '명절에 친척들이 모여 앉아 결혼은 언제 하느냐고 물었다.', fx: { happiness: -3 }, when: neverWed, ages: [30, 40] },
     { text: '김장 날 온 식구가 모여 배추 백 포기를 절였다.', fx: { relation: 3, health: -1 }, to: 2010 },
     { text: '이웃과 반찬을 나누며 지냈다.', fx: { relation: 2 }, to: 2000 },
     { text: '층간 소음 문제로 윗집과 얼굴을 붉혔다.', fx: { happiness: -3, relation: -1 }, from: 2000, when: city },
@@ -309,11 +435,21 @@ export const RANDOM_EVENTS: Record<Stage, RandomEvent[]> = {
     { text: '부부싸움이 잦아졌다.', fx: { happiness: -4, relation: -2 }, when: wed },
     { text: '배우자와 단둘이 여행을 다녀왔다.', fx: { happiness: 4, relation: 3 }, when: wed },
     { text: '결혼기념일을 잊어 한동안 냉랭했다.', fx: { relation: -2 }, when: wed },
-    { text: '혼자 사는 생활이 익숙해졌다.', fx: { happiness: 1 }, when: single, ages: [38, 54] },
+    { text: '혼자 사는 생활이 익숙해졌다.', fx: { happiness: 1 }, when: and(single, notDating, noKidsAtHome), ages: [38, 54] },
     { text: '주말마다 운동 동호회에 나갔다.', fx: { health: 3, relation: 3 }, from: 1995 },
     { text: '대출 이자가 올라 생활비를 줄였다.', fx: { happiness: -3 }, when: (s) => !!s.house && s.house.debt > 0 },
     { text: '집값이 올랐다는 뉴스에 마음이 복잡했다.', fx: { happiness: -2 }, when: renter, from: 2005 },
     { text: '이사 갈 집을 보러 주말마다 돌아다녔다.', fx: { happiness: -1 }, when: renter },
+    // 시대별 살림과 일
+    { text: '"마이카 시대"라며 첫 자가용을 뽑았다.', fx: { happiness: 4, cash: -800 }, from: 1985, to: 1995, when: (s) => working(s) && s.quintile >= 3 && noCar(s), then: getCar },
+    { text: '신도시 아파트 모델하우스를 보러 줄을 섰다.', fx: { happiness: 1 }, from: 1989, to: 1993, when: renter },
+    { text: '김치냉장고를 들여놓았다.', fx: { happiness: 2, cash: -100 }, from: 1996, to: 2005, when: wed },
+    { text: '처음 산 휴대폰으로 서툴게 문자를 보냈다.', fx: { happiness: 1 }, from: 1998, to: 2003, when: noPhone, then: getPhone },
+    { text: '외환위기로 회사가 명예퇴직 신청을 받았다. 동료 몇이 짐을 쌌다.', fx: { happiness: -4 }, from: 1998, to: 1999, when: office },
+    { text: '주말농장 한 칸을 분양받아 상추를 길렀다.', fx: { health: 2, happiness: 2 }, from: 2005, when: city },
+    { text: '차에 내비게이션을 달고 나서 처음 가는 길도 헤매지 않았다.', fx: { happiness: 1 }, from: 2005, to: 2012, when: hasCar },
+    { text: '재택근무 화상 회의에서 마이크를 끄는 걸 잊었다.', fx: { happiness: -1 }, from: 2020, to: 2022, when: office },
+    { text: '부동산 카페를 들락거리며 대출을 끌어모을지 고민했다.', fx: { happiness: -2 }, from: 2020, to: 2021, when: renter },
   ],
 
   // ───────── 55~69세 ─────────
@@ -323,11 +459,13 @@ export const RANDOM_EVENTS: Record<Stage, RandomEvent[]> = {
     { text: '친구의 부고를 들었다.', fx: { happiness: -4 } },
     { text: '무릎 수술을 받았다.', fx: { health: -5 }, ages: [60, 69] },
     { text: '처음으로 텃밭을 가꿨다.', fx: { happiness: 3, health: 2 } },
-    { text: '자녀가 독립해 집이 조용해졌다.', fx: { happiness: -2 }, when: (s) => s.children.length > 0 },
-    { text: '퇴근 후 시간이 남아 무엇을 할지 몰랐다.', fx: { happiness: -2 }, when: (s) => !!s.flags.retired },
+    { text: '자녀가 독립해 집이 조용해졌다.', fx: { happiness: -2 }, when: and(grownKids, noKidsAtHome) },
+    { text: '퇴직하고 나니 시간이 남아 무엇을 할지 몰랐다.', fx: { happiness: -2 }, when: (s) => !!s.flags.retired },
     { text: '정년을 앞두고 동료들과 송별회를 했다.', fx: { relation: 2, happiness: 1 }, when: office, ages: [57, 62] },
-    { text: '문화센터에서 서예를 배웠다.', fx: { happiness: 3, ability: 1 }, from: 1990 },
-    { text: '노래교실에서 친구를 사귀었다.', fx: { relation: 3, happiness: 2 }, from: 1990 },
+    { text: '문화센터에서 서예를 배웠다.', fx: { happiness: 3, ability: 1 }, from: 1990, bornTo: 1975 },
+    { text: '노래교실에서 친구를 사귀었다.', fx: { relation: 3, happiness: 2 }, from: 1990, bornTo: 1975 },
+    { text: '문화센터에서 악기를 하나 배우기 시작했다.', fx: { happiness: 3, ability: 1 }, from: 1990 },
+    { text: '취미 동호회에서 또래 친구를 사귀었다.', fx: { relation: 3, happiness: 2 }, bornFrom: 1976 },
     { text: '자격증 공부를 다시 시작했다.', fx: { ability: 3 } },
     { text: '하루 만 보 걷기를 시작했다.', fx: { health: 3 }, from: 2005 },
     { text: '혈압약을 먹기 시작했다.', fx: { health: -1 } },
@@ -337,18 +475,27 @@ export const RANDOM_EVENTS: Record<Stage, RandomEvent[]> = {
     { text: '초등학교 동창회에서 50년 만에 친구를 만났다.', fx: { relation: 4, happiness: 3 } },
     { text: '배우자와 산책하는 게 하루의 낙이 됐다.', fx: { happiness: 3, relation: 2 }, when: wed },
     { text: '배우자의 잔소리가 늘었다.', fx: { happiness: -1 }, when: wed },
-    { text: '자녀의 결혼식을 치렀다.', fx: { happiness: 5, relation: 3, cash: -1500 }, when: childAged(26, 40) },
+    { text: '자녀의 결혼식을 치렀다.', fx: { happiness: 5, relation: 3, cash: -1500 }, when: unwedChild(26, 40), then: markChild(26, 40, 'married') },
     { text: '자녀가 취업 준비로 힘들어하는 걸 지켜봤다.', fx: { happiness: -3 }, when: childAged(23, 32), from: 1998 },
     { text: '부모님 산소를 정리했다.', fx: { relation: 1 }, when: (s) => !!s.flags.parentsGone },
-    { text: '트로트 경연 프로그램에 푹 빠졌다.', fx: { happiness: 3 }, from: 2019, to: 2035, born: [1930, 1975] },
-    { text: '유튜브로 옛날 노래를 찾아 들었다.', fx: { happiness: 2 }, from: 2013, to: 2050 },
-    { text: '스마트폰 단체 대화방에 아침마다 꽃 사진을 보냈다.', fx: { relation: 2 }, from: 2013, born: [1930, 1972] },
-    { text: '젊을 때 즐기던 게임을 다시 켜 봤다. 손이 예전 같지 않았다.', fx: { happiness: 2 }, born: [1980, 2100], from: 2035 },
-    { text: '휴대폰 속 수십 년 치 사진을 정리했다.', fx: { happiness: 2 }, born: [1985, 2100], from: 2040 },
+    { text: '트로트 경연 프로그램에 푹 빠졌다.', fx: { happiness: 3 }, from: 2019, bornTo: 1972 },
+    { text: '유튜브로 옛날 노래를 찾아 들었다.', fx: { happiness: 2 }, from: 2013, bornTo: 1975 },
+    { text: '학창 시절 즐겨 듣던 노래를 다시 찾아 들었다.', fx: { happiness: 2 }, bornFrom: 1976 },
+    { text: '스마트폰 단체 대화방에 아침마다 꽃 사진을 보냈다.', fx: { relation: 2 }, from: 2013, bornTo: 1968 },
+    { text: '젊은 시절 미니홈피 사진을 다시 찾아보고 혼자 웃었다.', fx: { happiness: 2 }, bornFrom: 1978, bornTo: 1995 },
+    { text: '좋아하던 아이돌의 재결합 공연에 다녀왔다. 객석에 또래가 가득했다.', fx: { happiness: 4, relation: 1 }, bornFrom: 1980 },
+    { text: '젊을 때 하던 온라인 게임에 다시 접속해 봤다. 서버는 이미 닫혀 있었다.', fx: { happiness: -1 }, bornFrom: 1980 },
+    { text: '휴대폰 속 수십 년 치 사진을 정리했다.', fx: { happiness: 2 }, from: 2040, bornFrom: 1985 },
     { text: '주말마다 손주를 봐 주었다.', fx: { happiness: 2, health: -2, relation: 2 }, when: (s) => !!s.flags.grandchild },
     { text: '가게를 접을지 오래 고민했다.', fx: { happiness: -3 }, when: selfEmployed },
     { text: '농사일이 해마다 힘에 부쳤다.', fx: { health: -3 }, when: farming },
     { text: '외국인 노동자에게 농사일을 맡기기 시작했다.', fx: { health: 1, cash: -200 }, when: farming, from: 2005 },
+    // 시대별 노년 준비
+    { text: '바리스타 자격증을 땄다.', fx: { ability: 2, happiness: 2 }, from: 2010 },
+    { text: '메신저 프로필 사진을 손주 사진으로 바꿨다.', fx: { happiness: 2 }, from: 2010, when: grand },
+    { text: '은퇴하고 영상 채널을 열었다. 구독자는 대부분 지인이었다.', fx: { ability: 1, happiness: 2 }, from: 2018, when: (s) => !!s.flags.retired },
+    { text: '스마트워치로 걸음 수와 심박수를 챙겼다.', fx: { health: 1 }, from: 2018 },
+    { text: '은퇴 기념으로 젊을 때 못 가 본 나라로 배낭여행을 떠났다.', fx: { happiness: 4, cash: -300 }, from: 2020, bornFrom: 1965, when: (s) => !!s.flags.retired },
   ],
 
   // ───────── 70세~ ─────────
@@ -358,19 +505,22 @@ export const RANDOM_EVENTS: Record<Stage, RandomEvent[]> = {
     { text: '오랜 친구를 먼저 떠나보냈다.', fx: { happiness: -5 } },
     { text: '손주들이 놀러 와 하루 종일 집이 시끌벅적했다.', fx: { happiness: 6 }, when: (s) => !!s.flags.grandchild },
     { text: '혼자 지내는 시간이 길어졌다.', fx: { happiness: -4 }, when: single },
-    { text: '동네 복지관에서 스마트폰 쓰는 법을 배웠다.', fx: { ability: 2, happiness: 2 }, from: 2012, to: 2040, born: [1900, 1965] },
-    { text: '손주에게 새로 나온 기기 쓰는 법을 배웠다.', fx: { relation: 2, ability: 1 }, born: [1966, 2100], when: (s) => !!s.flags.grandchild },
+    { text: '동네 복지관에서 스마트폰 쓰는 법을 배웠다.', fx: { ability: 2, happiness: 2 }, from: 2012, bornTo: 1955 },
+    { text: '손주에게 새로 나온 기기 쓰는 법을 배웠다. 우리 때와는 또 달랐다.', fx: { ability: 1, relation: 2 }, when: (s) => !!s.flags.grandchild },
+    { text: '손주가 쓰는 말을 절반도 알아듣지 못했다.', fx: { happiness: -1 }, when: (s) => !!s.flags.grandchild },
     { text: '자식들이 매달 생활비를 보내 주었다.', fx: { happiness: 2 }, when: (s) => s.children.length > 0, to: 2010 },
     { text: '귀가 어두워져 보청기를 맞췄다.', fx: { health: -1, happiness: 1 }, ages: [75, 120] },
     { text: '계단 오르기가 힘들어졌다.', fx: { health: -2 }, ages: [75, 120] },
     { text: '빙판길에 넘어져 손목을 다쳤다.', fx: { health: -4 } },
     { text: '기억이 깜빡깜빡했다.', fx: { ability: -2 }, ages: [75, 120] },
-    { text: '젊은 시절 사진을 꺼내 보며 하루를 보냈다.', fx: { happiness: 2 } },
+    { text: '젊은 시절 사진을 꺼내 보며 하루를 보냈다.', fx: { happiness: 2 }, bornTo: 1985 },
+    { text: '오래전 찍어 둔 사진과 영상을 다시 돌려 보며 하루를 보냈다.', fx: { happiness: 2 }, bornFrom: 1986 },
     { text: '자서전을 쓰듯 지난 일을 공책에 적었다.', fx: { happiness: 3, ability: 1 } },
     { text: '노인대학에 다녔다.', fx: { relation: 3, ability: 1 }, from: 1990 },
-    { text: '공원 벤치에서 또래 노인들과 장기를 뒀다.', fx: { relation: 2, happiness: 2 } },
-    { text: '키오스크 앞에서 한참을 헤맸다.', fx: { happiness: -2 }, from: 2019, born: [1900, 1965] },
-    { text: '새로 바뀐 은행 앱 화면이 낯설어 한참 들여다봤다.', fx: { happiness: -1 }, born: [1966, 2100], from: 2040 },
+    { text: '공원 벤치에서 또래 노인들과 장기를 뒀다.', fx: { relation: 2, happiness: 2 }, bornTo: 1970 },
+    { text: '또래들과 모여 젊을 때 하던 게임을 다시 했다. 손이 예전 같지 않았다.', fx: { relation: 2, happiness: 2 }, bornFrom: 1975 },
+    { text: '키오스크 앞에서 한참을 헤맸다.', fx: { happiness: -2 }, from: 2019, bornTo: 1962 },
+    { text: '손이 떨려 화면 글씨를 자꾸 잘못 눌렀다.', fx: { happiness: -1 }, ages: [78, 120], bornFrom: 1963 },
     { text: '자식들과 영상통화를 했다.', fx: { happiness: 3, relation: 2 }, from: 2012, when: (s) => s.children.length > 0 },
     { text: '생일에 온 가족이 모였다.', fx: { happiness: 5, relation: 3 }, when: (s) => s.children.length > 0 },
     { text: '명절에도 자식들이 바빠 오지 못했다.', fx: { happiness: -3 }, when: (s) => s.children.length > 0 },
@@ -379,6 +529,12 @@ export const RANDOM_EVENTS: Record<Stage, RandomEvent[]> = {
     { text: '동네 텃밭에서 상추를 길러 이웃과 나눴다.', fx: { relation: 2, health: 1 } },
     { text: '요양보호사가 일주일에 세 번 집에 왔다.', fx: { health: 2 }, ages: [80, 120], from: 2008 },
     { text: '증손주가 태어났다는 소식을 들었다.', fx: { happiness: 5 }, ages: [80, 120], when: (s) => !!s.flags.grandchild },
+    { text: '노인 일자리로 아이들 등굣길 교통 지도를 했다.', fx: { relation: 2, health: 1 }, from: 2004, ages: [70, 80] },
+    { text: '기초연금이 들어오는 날을 손꼽아 기다렸다.', fx: { happiness: 1 }, from: 2014, when: hard }, // 2014년 기초연금 시행
+    { text: '치매안심센터에서 기억력 검사를 받았다.', fx: { happiness: -1 }, from: 2018, ages: [75, 120] },
+    { text: '구청에서 나눠 준 말벗 인형이 하루 종일 말을 걸어 왔다.', fx: { happiness: 1 }, from: 2020, ages: [75, 120], when: (s) => !s.married || !!s.flags.widowed },
+    { text: '보행 보조기를 밀며 동네를 한 바퀴 돌았다.', fx: { health: 1 }, ages: [82, 120] },
+    { text: '젊을 때 보던 애니메이션을 손주와 함께 봤다.', fx: { happiness: 3, relation: 2 }, bornFrom: 1985, when: grand },
   ],
 };
 
@@ -399,17 +555,17 @@ export const LIFE_EVENTS: RandomEvent[] = [
   { text: '아이 성적표를 보고 한숨을 쉬었다.', fx: { happiness: -2 }, when: childAged(10, 18) },
   { text: '아이가 상장을 받아 왔다.', fx: { happiness: 4 }, when: childAged(8, 17) },
   { text: '아이 수능 날, 교문 앞에서 기도했다.', fx: { happiness: -1, relation: 2 }, when: childAged(18, 18), from: 1994 },
-  { text: '아이가 대학에 합격했다.', fx: { happiness: 5 }, when: childAged(19, 19), from: 1975 },
-  { text: '아이 등록금 고지서를 받고 한숨을 쉬었다.', fx: { happiness: -2, cash: -500 }, when: childAged(19, 23), from: 1990 },
+  { text: '아이 등록금 고지서를 받고 한숨을 쉬었다.', fx: { happiness: -2, cash: -500 }, when: childInCollege, from: 1990 },
   { text: '아들이 입대하는 날 훈련소 앞에서 손을 흔들었다.', fx: { happiness: -2, relation: 2 }, when: (s) => s.children.some((c) => c.sex === 'M' && s.age - c.bornAge >= 20 && s.age - c.bornAge <= 22) },
   { text: '아이가 첫 월급으로 선물을 사 왔다.', fx: { happiness: 6, relation: 3 }, when: childAged(24, 30) },
-  { text: '다 큰 자식이 결혼은 안 하겠다고 했다.', fx: { happiness: -2 }, when: childAged(30, 40), from: 2005 },
+  { text: '다 큰 자식이 결혼은 안 하겠다고 했다.', fx: { happiness: -2 }, when: unwedChild(30, 40), from: 2005, then: markChild(30, 40, 'single') },
   { text: '가족사진을 찍었다.', fx: { relation: 3, happiness: 2 }, when: (s) => s.children.length > 0 },
   { text: '아이와 함께 처음으로 놀이공원에 갔다.', fx: { happiness: 4, relation: 2 }, when: childAged(4, 10), from: 1976 },
   // 부모님
   { text: '부모님 환갑잔치를 치렀다.', fx: { relation: 3, cash: -200 }, when: parentsAlive, ages: [28, 40], to: 2005 },
   { text: '부모님 칠순 잔치 대신 가족 여행을 다녀왔다.', fx: { relation: 3, cash: -300 }, when: parentsAlive, ages: [38, 52], from: 2000 },
-  { text: '부모님께 스마트폰 쓰는 법을 몇 번이고 알려 드렸다.', fx: { relation: 2 }, when: parentsAlive, from: 2012, to: 2035, ages: [30, 60], born: [1950, 1995] },
+  { text: '부모님께 스마트폰 쓰는 법을 몇 번이고 알려 드렸다.', fx: { relation: 2 }, when: parentsAlive, from: 2012, to: 2035, ages: [30, 60], bornTo: 1985 },
+  { text: '부모님이 휴대폰 설정을 바꿔 달라며 전화를 하셨다.', fx: { relation: 1 }, when: parentsAlive, from: 2012, ages: [35, 60], bornFrom: 1986 },
   { text: '명절에 고향 집에 내려가 부모님 얼굴을 뵀다.', fx: { relation: 2, happiness: 2 }, when: parentsAlive },
   { text: '부모님 집 수리비를 보탰다.', fx: { relation: 2, cash: -300 }, when: and(parentsAlive, working), ages: [35, 60] },
   // 그 밖의 어른 일
@@ -420,8 +576,15 @@ export const LIFE_EVENTS: RandomEvent[] = [
   { text: '지갑을 잃어버렸다가 되찾았다.', fx: { happiness: 2 } },
   { text: '휴대폰을 잃어버렸다.', fx: { happiness: -2, cash: -80 }, from: 2000 },
   { text: '보이스피싱 문자에 하마터면 속을 뻔했다.', fx: { happiness: -1 }, from: 2010 },
-  { text: '반려견을 가족으로 맞았다.', fx: { happiness: 4, relation: 1, cash: -100 }, from: 1995 },
-  { text: '키우던 반려동물이 무지개다리를 건넜다.', fx: { happiness: -5 }, from: 2005, ages: [30, 90] },
+  { text: '반려견을 가족으로 맞았다.', fx: { happiness: 4, relation: 1, cash: -100 }, from: 1995, when: noPet, then: getPet },
+  { text: '키우던 반려동물이 무지개다리를 건넜다.', fx: { happiness: -5 }, from: 2005, when: petFor(8), then: (s) => { s.flags.pet = undefined; } },
+  // 연애: 사귀는 사람이 있어야 헤어진다
+  { text: '연애를 시작했다.', fx: { happiness: 5, relation: 3 }, ages: [19, 55], when: notDating, then: startDating },
+  { text: '소개팅에 나갔지만 두 번 만나고 끝났다.', fx: { happiness: -1 }, ages: [20, 45], when: notDating },
+  { text: '사귀던 사람과 몇 달 만에 헤어졌다.', fx: { happiness: -3 }, when: datingFor(0, 1), then: breakUp },
+  { text: '오래 만난 사람과 헤어졌다.', fx: { happiness: -6 }, when: datingFor(3), then: breakUp },
+  { text: '애인과 주말마다 데이트를 했다.', fx: { happiness: 3, relation: 1 }, when: dating },
+  { text: '애인과 크게 다퉜다가 화해했다.', fx: { happiness: -1, relation: 1 }, when: datingFor(1) },
   { text: '봉사활동을 꾸준히 다녔다.', fx: { relation: 3, happiness: 2 } },
   { text: '종교 모임에 나가기 시작했다.', fx: { relation: 3, happiness: 2 } },
   { text: '독감으로 일주일을 앓아누웠다.', fx: { health: -3 } },
@@ -429,6 +592,62 @@ export const LIFE_EVENTS: RandomEvent[] = [
   { text: '건강을 위해 아침마다 걷기 시작했다.', fx: { health: 3 } },
   { text: '로또를 샀다가 번호 하나 차이로 떨어졌다.', fx: { happiness: -1 }, from: 2002 },
   { text: '복권에 당첨돼 몇십만 원을 받았다.', fx: { happiness: 3, cash: 50 }, from: 1990 },
+  // 시대별 생활
+  { text: '주말마다 비디오 가게에서 영화를 빌려 봤다.', fx: { happiness: 2 }, from: 1985, to: 2005 },
+  { text: '외환위기에 아나바다 장터에 안 입는 옷을 내놓았다.', fx: { relation: 1 }, from: 1998, to: 1999 },
+  { text: '식구들과 찜질방에서 계란을 까먹으며 하루를 보냈다.', fx: { relation: 2, happiness: 2 }, from: 1999, to: 2012 },
+  { text: '디지털카메라를 사서 가족사진을 잔뜩 찍었다.', fx: { relation: 2, cash: -50 }, from: 2001, to: 2008, when: hasKids },
+  { text: '회식 자리에서 강남스타일 말춤을 췄다.', fx: { relation: 2, happiness: 1 }, from: 2012, to: 2013, when: working },
+  { text: '배달앱으로 야식을 시키는 날이 늘었다.', fx: { health: -1, happiness: 1 }, from: 2013 },
+  { text: '허니버터칩을 구하려고 편의점을 몇 군데나 돌았다.', fx: { happiness: 1 }, from: 2014, to: 2015, ages: [19, 50] },
+  { text: '메르스 소식에 아이를 한동안 집에만 두었다.', fx: { happiness: -1 }, from: 2015, to: 2015, when: childAged(0, 12) },
+  { text: '중고거래 앱으로 동네 사람과 물건을 사고팔았다.', fx: { happiness: 1 }, from: 2016 },
+  { text: '주말마다 촛불을 들고 광장에 나갔다.', fx: { relation: 2 }, from: 2016, to: 2017 },
+  { text: '긴급재난지원금으로 동네 가게에서 장을 봤다.', fx: { happiness: 1 }, from: 2020, to: 2020 },
+  { text: '차에서 잠을 자는 차박 캠핑을 떠났다.', fx: { happiness: 3 }, from: 2020, to: 2023, ages: [25, 60], when: hasCar },
+  { text: '새로 나온 물건을 사려고 새벽부터 백화점 앞에 줄을 섰다.', fx: { happiness: 1, health: -1 }, from: 2021, to: 2023, ages: [20, 50] },
+  { text: '두쫀쿠를 사려고 줄을 섰지만 바로 앞에서 품절됐다.', fx: { happiness: -1 }, from: 2025, to: 2026, ages: [19, 50] },
+  { text: '타던 차를 전기차로 바꿨다.', fx: { happiness: 2, cash: -500 }, from: 2021, when: and(working, wellOff, hasCar) },
+  { text: '할부로 차를 한 대 장만했다.', fx: { happiness: 3, cash: -1000 }, from: 1996, ages: [27, 55], when: and(working, noCar), then: getCar },
+];
+
+// ───────── 집안 형편의 변화 ─────────
+// 부모님이 살아 계시는 동안(40세까지) 그해 경기에 따라 일어난다. 형편이 바뀌면 부모님 지원·상속도 따라 바뀐다.
+// 연도마다 오름·내림 문장이 하나 이상 남아 있도록 시대 없는 문장을 함께 둔다.
+const kidAges: [number, number] = [1, 18];
+/** 지금 집안 형편이 lo~hi 분위일 때 (내림·오름 문장이 그 집 형편에 어울리게) */
+const q = (lo: number, hi: number) => (s: Life) => s.quintile >= lo && s.quintile <= hi;
+export const FAMILY_FORTUNE: FortuneEvent[] = [
+  // 오름
+  { dir: 1, text: '아버지가 중동 건설 현장에서 몇 해를 일하고 돌아왔다. 살림이 눈에 띄게 폈다.', from: 1975, to: 1985, ages: [1, 25], when: q(1, 3) },
+  { dir: 1, text: '부모님이 사 둔 땅이 개발 지역에 들어가 값이 크게 뛰었다.', from: 1970, to: 1991, when: (s) => s.quintile >= 2 },
+  { dir: 1, text: '아버지가 공장 반장이 되어 월급이 올랐다. 밥상 반찬이 달라졌다.', from: 1965, to: 1995, ages: kidAges, when: q(1, 3) },
+  { dir: 1, text: '부모님이 시장에서 하던 가게가 자리를 잡았다.', to: 2000, when: q(1, 4) },
+  { dir: 1, text: '부모님이 아파트 청약에 당첨돼 새 아파트로 이사했다. 집값이 해마다 올랐다.', from: 1978, to: 1997, when: q(2, 4) },
+  { dir: 1, text: '부모님이 3저 호황 때 사 둔 주식이 크게 올랐다.', from: 1986, to: 1989, when: q(3, 5) },
+  { dir: 1, text: '어머니도 일을 시작해 맞벌이가 됐다. 살림이 조금씩 나아졌다.', from: 1985, ages: [1, 25], when: q(1, 3) },
+  { dir: 1, text: '부모님이 차린 치킨집이 동네에서 이름난 가게가 됐다.', from: 1990, to: 2015, when: q(1, 3) },
+  { dir: 1, text: '부모님 집값이 몇 해 사이에 크게 올랐다.', from: 2001, to: 2007, when: (s) => s.quintile >= 2 },
+  { dir: 1, text: '부모님이 사신 아파트값이 두 배 가까이 뛰었다.', from: 2018, to: 2021, when: (s) => s.quintile >= 2 },
+  { dir: 1, text: '귀농한 부모님의 특용작물 농사가 잘됐다.', from: 1995, when: rural },
+  { dir: 1, text: '아버지가 승진을 거듭해 살림에 여유가 생겼다.', when: q(2, 5) },
+  { dir: 1, text: '부모님이 하던 사업이 자리를 잡아 형편이 폈다.' },
+  { dir: 1, text: '부모님이 오래 붓던 적금을 타고 부업까지 잘돼 형편이 한결 나아졌다.', when: q(1, 2) },
+  // 내림
+  { dir: -1, text: '흉년이 들어 빚을 내 끼니를 이었다.', to: 1975, when: and(rural, q(1, 3)), fx: { happiness: -3, health: -1 } },
+  { dir: -1, text: '불경기에 아버지 일감이 뚝 끊겼다.', from: 1979, to: 1981, when: q(1, 3) },
+  { dir: -1, text: '외환위기로 아버지 회사가 부도났다. 집안이 크게 기울었다.', from: 1997, to: 1999, fx: { happiness: -5 } },
+  { dir: -1, text: '외환위기로 부모님 가게가 문을 닫았다.', from: 1997, to: 1999, when: q(1, 4), fx: { happiness: -5 } },
+  { dir: -1, text: '아버지가 명예퇴직을 하고 차린 가게가 2년 만에 문을 닫았다.', from: 1999, to: 2015, when: q(2, 4) },
+  { dir: -1, text: '부모님 카드빚이 불어나 살림이 어려워졌다.', from: 2002, to: 2004, when: q(1, 4) },
+  { dir: -1, text: '금융위기로 부모님 가게 매출이 반토막 났다.', from: 2008, to: 2009, when: q(1, 4) },
+  { dir: -1, text: '코로나19로 부모님 가게에 손님이 끊겼다.', from: 2020, to: 2021, when: q(1, 4), fx: { happiness: -4 } },
+  { dir: -1, text: '아버지가 친척 빚보증을 섰다가 집을 날렸다.', to: 2010, fx: { happiness: -5 } },
+  { dir: -1, text: '학원을 끊고 용돈도 줄었다. 집안 사정이 어려워졌다.', ages: [8, 18], from: 1985, when: q(2, 4) },
+  { dir: -1, text: '부모님 형편이 어려워져 다달이 생활비를 보태 드렸다.', ages: [25, 40], when: (s) => s.independent && working(s) && s.quintile <= 3 },
+  { dir: -1, text: '아버지가 크게 다쳐 한동안 일을 하지 못했다.', when: q(1, 4) },
+  { dir: -1, text: '부모님이 믿었던 사람에게 사기를 당해 모아 둔 돈을 잃었다.', fx: { happiness: -4 } },
+  { dir: -1, text: '부모님 사업이 기울어 큰 집에서 작은 집으로 옮겼다.', when: q(3, 5) },
 ];
 
 // ───────── 작은 갈림길 ─────────
@@ -521,10 +740,10 @@ export const DILEMMAS: Dilemma[] = [
     ],
   },
   {
-    prompt: '연락이 끊겼던 첫사랑에게서 연락이 왔다.', ages: [25, 45], when: single,
+    prompt: '연락이 끊겼던 첫사랑에게서 연락이 왔다.', ages: [25, 45], when: notDating,
     options: [
-      { label: '만나 본다', auto: 4, outcomes: [[3, '다시 설렜다.', { happiness: 5, relation: 2 }], [7, '추억은 추억으로 남겨 두는 게 나았다.', { happiness: -2 }]] },
-      { label: '답하지 않는다', auto: 5, outcomes: [[1, '휴대폰을 한참 들여다보다 내려놓았다.', {}]] },
+      { label: '만나 본다', auto: 4, outcomes: [[3, '다시 설렜다. 만남이 이어졌다.', { happiness: 5, relation: 2 }, startDating], [7, '추억은 추억으로 남겨 두는 게 나았다.', { happiness: -2 }]] },
+      { label: '답하지 않는다', auto: 5, outcomes: [[1, '한참을 망설이다 끝내 답하지 않았다.', {}]] },
     ],
   },
   // 일
@@ -579,9 +798,9 @@ export const DILEMMAS: Dilemma[] = [
     ],
   },
   {
-    prompt: '강아지를 한 마리 데려올까?', ages: [10, 75], from: 1995,
+    prompt: '강아지를 한 마리 데려올까?', ages: [10, 75], from: 1995, when: noPet,
     options: [
-      { label: '데려온다', auto: 4, outcomes: [[1, '집에 웃음이 늘었다.', { happiness: 5, relation: 2 }]] },
+      { label: '데려온다', auto: 4, outcomes: [[1, '집에 웃음이 늘었다.', { happiness: 5, relation: 2 }, getPet]] },
       { label: '다음에', auto: 5, outcomes: [[1, '산책하는 남의 집 강아지를 오래 바라봤다.', {}]] },
     ],
   },
@@ -633,7 +852,7 @@ export const DILEMMAS: Dilemma[] = [
     prompt: '동창들이 다 같이 해외여행을 가자고 했다.', ages: [55, 78], from: 1990,
     options: [
       { label: '간다', auto: 5, outcomes: [[1, '학생 때처럼 웃고 떠들었다.', { happiness: 5, relation: 3, cash: -300 }]] },
-      { label: '빠진다', auto: 4, outcomes: [[1, '단톡방에 올라오는 사진만 봤다.', { relation: -1 }]] },
+      { label: '빠진다', auto: 4, outcomes: [[1, '다녀온 친구들이 보여 주는 사진만 봤다.', { relation: -1 }]] },
     ],
   },
   {
@@ -658,7 +877,7 @@ export const DILEMMAS: Dilemma[] = [
     ],
   },
   {
-    prompt: '손주 대학 등록금을 보태 줄까?', ages: [65, 95], when: (s) => !!s.flags.grandchild && s.cash > 500,
+    prompt: '손주 대학 등록금을 보태 줄까?', ages: [70, 95], when: (s) => !!s.flags.grandchild && s.cash > 500,
     options: [
       { label: '보탠다', auto: 6, outcomes: [[1, '손주가 꾸벅 인사를 했다.', { relation: 4, happiness: 3, cash: -500 }]] },
       { label: '마음만 전한다', auto: 3, outcomes: [[1, '봉투에 짧은 편지를 넣었다.', { relation: 1 }]] },
@@ -669,6 +888,56 @@ export const DILEMMAS: Dilemma[] = [
     options: [
       { label: '헌혈한다', auto: 4, outcomes: [[1, '빵과 우유를 받아 들고 뿌듯해했다.', { happiness: 2 }]] },
       { label: '지나친다', auto: 5, outcomes: [[1, '바쁜 걸음을 재촉했다.', {}]] },
+    ],
+  },
+  // 시대가 있는 갈림길
+  {
+    prompt: '친구들이 고고장에 가자고 했다.', ages: [18, 26], from: 1970, to: 1980,
+    options: [
+      { label: '따라간다', auto: 4, outcomes: [[6, '밤새 춤을 추고 새벽 첫차를 탔다.', { happiness: 4, relation: 3 }], [4, '통금에 걸려 파출소에서 밤을 보냈다.', { happiness: -2, relation: 2 }]] },
+      { label: '집에 간다', auto: 5, outcomes: [[1, '다음 날 친구들 무용담만 들었다.', {}]] },
+    ],
+  },
+  {
+    prompt: '"금 모으기 운동"에 집에 있는 돌반지를 내놓을까?', ages: [25, 75], from: 1998, to: 1998,
+    options: [
+      { label: '내놓는다', auto: 6, outcomes: [[1, '은행 앞 긴 줄에 서서 반지를 건넸다. 나라를 돕는 것 같았다.', { relation: 2, happiness: 2 }]] },
+      { label: '간직한다', auto: 3, outcomes: [[1, '아이 돌 때 받은 반지라 차마 내놓지 못했다.', {}]] },
+    ],
+  },
+  {
+    prompt: '휴대폰을 새로 살까, 값싼 시티폰을 살까?', ages: [19, 45], from: 1997, to: 1998, bornTo: 1979, when: noPhone,
+    options: [
+      { label: '휴대폰', auto: 5, outcomes: [[1, '비쌌지만 몇 년을 잘 썼다.', { happiness: 2 }, getPhone]] },
+      { label: '시티폰', auto: 4, outcomes: [[1, '공중전화 근처에서만 걸렸다. 얼마 안 가 서비스가 끝났다.', { happiness: -2 }]] },
+    ],
+  },
+  {
+    prompt: '친구가 비트코인을 사 보라고 했다.', ages: [20, 60], from: 2017, to: 2021, when: (s) => s.independent && s.cash > 300,
+    options: [
+      { label: '사 본다', auto: 4, outcomes: [[4, '값이 몇 배로 뛰었다. 얼른 팔았다.', { cash: 800, happiness: 4 }], [6, '사자마자 폭락했다.', { cash: -500, happiness: -4 }]] },
+      { label: '안 산다', auto: 5, outcomes: [[1, '뉴스에 나올 때마다 마음이 싱숭생숭했다.', { happiness: -1 }]] },
+    ],
+  },
+  {
+    prompt: '코로나19가 한창인데 명절에 고향에 내려갈까?', ages: [22, 70], from: 2020, to: 2021, when: parentsAlive,
+    options: [
+      { label: '내려간다', auto: 4, outcomes: [[8, '조심조심 얼굴만 뵙고 왔다.', { relation: 2 }], [2, '다녀와서 코로나19에 걸렸다.', { relation: 1, health: -3 }]] },
+      { label: '영상통화로 대신한다', auto: 5, outcomes: [[1, '화면 너머로 세배를 했다.', { relation: -1 }]] },
+    ],
+  },
+  {
+    prompt: '아이를 영어유치원에 보낼까?', ages: [28, 50], from: 2005, when: (s) => childAged(4, 6)(s) && s.quintile >= 3 && s.independent,
+    options: [
+      { label: '보낸다', auto: 4, outcomes: [[1, '아이가 영어 노래를 흥얼거렸다. 원비 고지서가 무거웠다.', { happiness: 1, cash: -1200 }]] },
+      { label: '동네 유치원에 보낸다', auto: 5, outcomes: [[1, '아이는 동네 친구들과 흙장난을 하며 컸다.', { relation: 1 }]] },
+    ],
+  },
+  {
+    prompt: '요즘 다들 줄 선다는 디저트 가게 앞을 지나갔다.', ages: [15, 45], from: 2023,
+    options: [
+      { label: '줄을 선다', auto: 4, outcomes: [[4, '한 시간을 기다려 겨우 샀다. 맛은 있었다.', { happiness: 3 }], [6, '바로 앞에서 품절됐다.', { happiness: -2 }]] },
+      { label: '그냥 지나간다', auto: 5, outcomes: [[1, '유행은 금방 지나갔다.', {}]] },
     ],
   },
 ];

@@ -16,8 +16,8 @@
  */
 import { KDATA as D, type EduTier, type JobType, type RegionGroup, type Sex } from './data';
 import {
-  CANCERS, DILEMMAS, DREAMS, INTEREST_CERTS, INTEREST_DREAMS, INTEREST_LATE_JOBS, INTEREST_TITLES, INTERESTS, JOB_TITLES, LIFE_EVENTS,
-  MEETING_PLACES, MILITARY_BASES, RANDOM_EVENTS, TRAITS, type Dilemma, type RandomEvent,
+  CANCERS, DILEMMAS, DREAMS, FAMILY_FORTUNE, INTEREST_CERTS, INTEREST_DREAMS, INTEREST_LATE_JOBS, INTEREST_TITLES, INTERESTS, JOB_TITLES,
+  LIFE_EVENTS, MEETING_PLACES, MILITARY_BASES, RANDOM_EVENTS, TRAITS, type Dilemma, type RandomEvent,
   availableIn, stageOf, type Dated, type Effect, type InterestKey, type StatKey, type TraitKey,
 } from './content';
 import { PATHS, type PathChoice, type PathOption } from './paths';
@@ -27,7 +27,7 @@ import { Rng } from './random';
 import { josa, particle, won } from './text';
 import {
   at, BACKGROUND_HAZARD, BIRTHS, CAREER_BREAK, COLLEGE_RATE, CURRENT_YEAR, FARM_SHARE, FEMALE_SCHOOL_GAP,
-  FIRST_MARRIAGE_AGE, HIGH_SCHOOL_RATE, HISTORY, INFANT_MORTALITY, LIFE_EXPECTANCY, MARITAL_FERTILITY,
+  FIRST_MARRIAGE_AGE, FORTUNE_DOWN, FORTUNE_UP, HIGH_SCHOOL_RATE, HISTORY, INFANT_MORTALITY, LIFE_EXPECTANCY, MARITAL_FERTILITY,
   EVER_MARRIED, MARRIAGE_SD, MIDDLE_SCHOOL_RATE, NATIONAL_PENSION_START, REAL_HOUSE, REAL_WAGE, TFR, UNEMPLOYMENT,
   WIFE_WORKS, alternativeServiceName, basicPension, depositRate, elementaryName, examName, INVEST_FROM, INVEST_FUTURE, investReturn, militaryMonths,
   tutoringBanned, vocationalSchoolName,
@@ -126,7 +126,8 @@ interface Option { label: string; desc?: string; auto?: number; run: () => void 
 interface Job { type: JobType; title: string; base: number; since?: number; main: boolean }
 /** incomeBase: 2024년 가치 연봉(만원), 일하지 않으면 0 */
 interface Spouse { name: string; sex: Sex; age0: number; incomeBase: number; alive: boolean; edu: EduTier; job: string }
-interface Child { sex: Sex; name: string; bornAge: number }
+/** married: 결혼했다 · single: 결혼하지 않겠다고 했다 · college: 대학에 들어갔다 */
+interface Child { sex: Sex; name: string; bornAge: number; married?: boolean; single?: boolean; college?: boolean }
 /** base: 2024년 가치 기준 집값. 실제 그해 집값 = base × 그해 실질 집값 지수 */
 interface House { base: number; debt: number; loan: number; boughtAge: number }
 interface Residence { name: string; group: RegionGroup; seoul: boolean }
@@ -140,6 +141,13 @@ interface Flags {
   parentHelpUsed?: boolean; parentsGone?: boolean; grandchild?: boolean;
   cancerAge?: number; welfare?: boolean; leftFarm?: boolean; lastDebtCall?: number;
   track?: 'science' | 'humanities' | 'arts'; retirePlan?: 'save' | 'work' | 'farm'; grandCareAsked?: boolean;
+  /** 사귀기 시작한 나이 (사귀는 사람이 없으면 undefined) */
+  dating?: number;
+  /** 반려동물을 들인 나이 */
+  pet?: number;
+  car?: boolean; phone?: boolean;
+  /** 집안 형편이 마지막으로 바뀐 나이 */
+  fortuneAge?: number;
 }
 
 /**
@@ -254,7 +262,7 @@ function normCdf(z: number): number {
 }
 
 /** 나이가 들수록 이혼은 드물어진다 (황혼 이혼은 있지만 75세 넘어서는 거의 없다) (추정) */
-const divorceByAge = (age: number) => (age < 55 ? 1 : age < 65 ? 0.6 : age < 75 ? 0.3 : 0.05);
+const divorceByAge = (age: number) => (age < 55 ? 1 : age < 65 ? 0.6 : age < 75 ? 0.3 : age < 85 ? 0.05 : 0);
 
 const eduName = (t: EduTier) => D.eduTiers[t].label.replace(' 졸업', '');
 const fmt = (n: number, d = 1) => (Math.round(n * 10 ** d) / 10 ** d).toLocaleString('ko-KR');
@@ -279,7 +287,10 @@ export class Life {
   region!: (typeof D.birthsByRegion)[number];
   residence!: Residence;
   sex!: Sex;
+  /** 지금 부모님 집안 형편 (1~5분위). 시대 흐름에 따라 바뀔 수 있다 */
   quintile = 3;
+  /** 태어났을 때의 집안 형편 */
+  birthQuintile = 3;
   surname = '';
   name = '';
   dream = '';
@@ -566,6 +577,7 @@ export class Life {
     this.residence = { name: this.region.name, group: this.region.group, seoul: this.region.id === 'seoul' };
     this.sex = r.chance(maleShare(sexRatio(this.birthYear, this.region.id as RegionId))) ? 'M' : 'F';
     this.quintile = 1 + Math.floor(r.rand() * 5);
+    this.birthQuintile = this.quintile;
     this.surname = r.weighted(D.surnames)[0];
     this.name = this.surname + r.pick(namesFor(this.sex, this.birthYear));
     const qShift = [-4, -2, 0, 2, 4][this.quintile - 1];
@@ -604,6 +616,7 @@ export class Life {
     if (HISTORY[this.year] && this.age >= 5) this.log(HISTORY[this.year], 'news');
     if (this.year === 1998 && this.independent) this.fact('imf');
     this.milestones();
+    this.familyFortune();
     if (!this.pending) this.lifeOpportunities();
     this.career();
     this.familyYear();
@@ -1151,7 +1164,8 @@ export class Life {
     const diff = Math.round(r.normal(this.year < 1995 ? 3.2 : 2.4, 2));
     const spouseAge = this.sex === 'M' ? this.age - diff : this.age + diff;
     const spouseName = r.weighted(D.surnames)[0] + r.pick(namesFor(spouseSex, this.year - spouseAge));
-    const places = this.titles(MEETING_PLACES).filter((m) => !(m === '회사에서' && (!this.job || ['none', 'farm', 'self'].includes(this.job.type))) && !(m === '대학 동기 모임에서' && !['college2', 'local4', 'capital4', 'top4'].includes(this.edu ?? '')));
+    const places = this.titles(MEETING_PLACES).filter((m) => !(m === '회사에서' && (!this.job || ['none', 'farm', 'self'].includes(this.job.type))) && !(m === '대학 동기 모임에서' && !['college2', 'local4', 'capital4', 'top4'].includes(this.edu ?? ''))
+      && !(this.flags.dating !== undefined && /중매|맞선/.test(m)));
     const place = r.pick(places);
     const sp = this.spouseProfile(spouseSex, place === '대학 동기 모임에서');
     const gap = spouseAge - this.age;
@@ -1160,7 +1174,11 @@ export class Life {
       ? `${rel} ${spouseAge}세, ${EDU_PHRASE[sp.edu]} ${josa(sp.job, '이었다/였다')}`
       : `${rel} ${spouseAge}세, ${EDU_PHRASE[sp.edu]} 사람이었다. 결혼하면 살림을 맡기로 했다`;
     const pay = sp.incomeBase > 0 ? ` · 연 ${won(Math.round((sp.incomeBase * this.wage) / 100) * 100)}` : '';
-    this.log(`${place} 만난 ${josa(spouseName, '과/와')} 진지한 사이가 됐다. ${intro}.`, 'good');
+    // 사귀던 사람이 있으면 그 사람과 결혼 이야기가 나온다
+    const years = this.flags.dating === undefined ? -1 : this.age - this.flags.dating;
+    this.flags.dating = undefined;
+    const met = years < 0 ? `${place} 만난` : years === 0 ? `${place} 만나 사귀던` : `${place} 만나 ${years <= 10 ? NATIVE_NUM[years] : years} 해째 사귀던`;
+    this.log(`${met} ${josa(spouseName, '과/와')} 진지한 사이가 됐다. ${intro}.`, 'good');
     this.ask('결혼 이야기가 나왔다.', [
       {
         label: '결혼한다', desc: `${spouseName} · ${spouseAge}세 · ${eduName(sp.edu)} · ${sp.job}${pay}`, auto: 8.5,
@@ -1478,7 +1496,8 @@ export class Life {
       }
       this.apply({ happiness: -10 });
     }
-    if (this.children.length && !f.grandchild && a >= 50 && this.children[0].bornAge + 28 <= a && r.chance(0.12)) {
+    // 손주는 결혼한 자녀가 있어야 본다
+    if (this.children.some((c) => c.married) && !f.grandchild && a >= 50 && this.children[0].bornAge + 28 <= a && r.chance(0.12)) {
       f.grandchild = true;
       this.log('첫 손주가 태어났다.', 'good');
       this.apply({ happiness: 8 });
@@ -1487,8 +1506,14 @@ export class Life {
       const ca = a - c.bornAge;
       const cy = this.year;
       if (ca === 7) this.log(`${josa(c.name, '이/가')} ${elementaryName(cy)}에 입학했다.`);
-      if (ca === 19 && r.chance(at(COLLEGE_RATE, cy))) this.log(`${josa(c.name, '이/가')} 대학에 들어갔다.`);
-      if (ca === Math.round(at(FIRST_MARRIAGE_AGE[c.sex], cy)) && r.chance(0.6)) this.log(`${josa(c.name, '이/가')} 결혼했다.`, 'good');
+      if (ca === 19 && r.chance(at(COLLEGE_RATE, cy))) {
+        c.college = true;
+        this.log(`${josa(c.name, '이/가')} 대학에 들어갔다.`);
+      }
+      if (ca === Math.round(at(FIRST_MARRIAGE_AGE[c.sex], cy)) && r.chance(0.6) && !c.married && !c.single) {
+        c.married = true;
+        this.log(`${josa(c.name, '이/가')} 결혼했다.`, 'good');
+      }
     }
     if (a >= 30 && f.cancerAge === undefined && r.chance(0.00085 * Math.exp(0.065 * (a - 30)))) {
       f.cancerAge = a;
@@ -1503,13 +1528,12 @@ export class Life {
     }
   }
 
-  /** 사건이 지금 형편에 맞는지: 달력 연도(from/to), 나이(ages), 세대(born, 출생연도), 형편(when) */
-  private eventFits(e: { ages?: [number, number]; from?: number; to?: number; born?: [number, number]; when?: (l: Life) => boolean }) {
-    const y = this.year;
+  /** 사건이 지금 형편에 맞는지: 달력 연도(from/to), 세대(bornFrom/bornTo, 출생연도), 나이(ages), 형편(when) */
+  private eventFits(e: { ages?: [number, number]; from?: number; to?: number; bornFrom?: number; bornTo?: number; when?: (l: Life) => boolean }) {
+    const y = this.year, b = this.birthYear;
     return (e.from ?? -Infinity) <= y && y <= (e.to ?? Infinity)
-      && (!e.ages || (e.ages[0] <= this.age && this.age <= e.ages[1]))
-      && (!e.born || (e.born[0] <= this.birthYear && this.birthYear <= e.born[1]))
-      && (!e.when || e.when(this));
+      && (e.bornFrom ?? -Infinity) <= b && b <= (e.bornTo ?? Infinity)
+      && (!e.ages || (e.ages[0] <= this.age && this.age <= e.ages[1])) && (!e.when || e.when(this));
   }
 
   private randomEvent() {
@@ -1524,6 +1548,32 @@ export class Life {
     const mood = (e.fx.happiness ?? 0) + (e.fx.health ?? 0);
     this.log(e.text, mood < -3 ? 'bad' : (e.fx.happiness ?? 0) > 3 ? 'good' : 'event');
     this.apply(scaleFx(e.fx, EVENT_STAT_SCALE));
+    e.then?.(this);
+  }
+
+  /**
+   * 집안 형편의 변화: 부모님이 살아 계시는 동안 그해 경기에 따라 집안 형편(소득분위)이 한 칸씩 오르내린다.
+   * 고도성장기에는 오르내림이 잦고, 외환위기·금융위기·코로나19 때는 내려가는 집이 많다.
+   * 분위는 상대적인 자리라서 오르는 집과 내려가는 집이 대체로 엇비슷하게 맞춰 두었다. (추정)
+   */
+  private familyFortune() {
+    const a = this.age;
+    const f = this.flags;
+    if (a < 1 || a > 40 || f.parentsGone) return;
+    if (f.fortuneAge !== undefined && a - f.fortuneAge < 4) return; // 한 번 바뀌면 몇 해는 그대로
+    const up = at(FORTUNE_UP, this.year), down = at(FORTUNE_DOWN, this.year);
+    const r = this.r.rand();
+    const dir = r < up ? (this.quintile < 5 ? 1 : 0) : r < up + down ? (this.quintile > 1 ? -1 : 0) : 0;
+    if (!dir) return;
+    const pool = FAMILY_FORTUNE.filter((e) => e.dir === dir && !this.usedEvents.has(e.text) && this.eventFits(e));
+    if (!pool.length) return;
+    const e = this.r.pick(pool);
+    this.usedEvents.add(e.text);
+    const before = this.quintileInfo.label;
+    this.quintile += dir;
+    f.fortuneAge = a;
+    this.log(`${e.text} (집안 형편: ${before} → ${this.quintileInfo.label})`, dir > 0 ? 'good' : 'bad');
+    this.apply(scaleFx(e.fx ?? { happiness: dir * 3 }, EVENT_STAT_SCALE));
   }
 
   /** 작은 갈림길: 고른 뒤 결과는 가중치대로 뽑는다. 같은 갈림길은 한 생에 한 번 */
@@ -1536,7 +1586,8 @@ export class Life {
     this.ask(d.prompt, d.options.map((o) => ({
       label: o.label, desc: o.desc, auto: o.auto,
       run: () => {
-        const [, text, fx] = this.r.weighted(o.outcomes.map((x) => [x, x[0]] as [typeof x, number]))[0];
+        const [, text, fx, then] = this.r.weighted(o.outcomes.map((x) => [x, x[0]] as [typeof x, number]))[0];
+        then?.(this);
         const mood = (fx.happiness ?? 0) + (fx.health ?? 0) + (fx.cash ?? 0) / 500;
         this.log(text, mood <= -3 ? 'bad' : mood >= 4 ? 'good' : 'event');
         // 학창 시절 갈림길은 역량을 반만 반영한다 (진학률 보정)
@@ -1612,7 +1663,8 @@ export class Life {
   // ───────── 요약 ─────────
   summary(): Summary {
     const sexWord = this.sex === 'M' ? '남자아이' : '여자아이';
-    const lines: string[] = [`${this.birthYear}년, ${this.region.name}의 ${this.quintileInfo.label} 집에서 ${sexWord}로 태어났다.`];
+    const born = D.incomeQuintiles[this.birthQuintile - 1].label;
+    const lines: string[] = [`${this.birthYear}년, ${this.region.name}의 ${born} 집에서 ${sexWord}로 태어났다.`];
     if (this.age >= 7) {
       lines.push(this.lastWork ? `어릴 적 꿈은 ${this.dream}, 마지막 일은 ${this.lastWork}.` : `어릴 적 꿈은 ${josa(this.dream, '이었다/였다')}.`);
     }
@@ -1657,7 +1709,7 @@ export class Life {
       name: this.name,
       sex: this.sex,
       region: this.region.name,
-      family: this.quintileInfo.label,
+      family: born,
       age: this.age,
       cause: this.deathCause,
       birthYear: this.birthYear,

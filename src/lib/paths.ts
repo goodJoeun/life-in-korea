@@ -4,7 +4,7 @@
  * 플레이어가 고른 것이 성향(traits)과 관심 분야(interests)로 쌓이고, 그에 맞춰 다음 선택지가 열린다.
  * 결과는 여전히 확률을 따른다(outcomes 가중치).
  *
- * 필드: ages 나이 · from/to 달력 연도 · born 출생연도 · when 형편 조건 · chance 조건이 맞는 해에 나올 확률(1이면 꼭)
+ * 필드: ages 나이 · from/to 달력 연도 · bornFrom/bornTo 출생연도 · when 형편 조건 · chance 조건이 맞는 해에 나올 확률(1이면 꼭)
  * 선택지: shape 고르면 바뀌는 성향·관심 · lean 성향에 따라 '운에 맡기기' 가중치가 바뀌는 방향 · then 엔진 상태 바꾸기
  * 문장은 과거형 일기체. 시대가 있는 문장은 eraText 나 from/to 로. 수치 효과는 작게 (통계 보정).
  */
@@ -30,7 +30,8 @@ export interface PathChoice {
   chance?: number;
   from?: number;
   to?: number;
-  born?: [number, number];
+  bornFrom?: number;
+  bornTo?: number;
   when?: (l: Life) => boolean;
   prompt: string | ((l: Life) => string);
   options: (l: Life) => PathOption[];

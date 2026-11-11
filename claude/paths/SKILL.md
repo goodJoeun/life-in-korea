@@ -32,7 +32,7 @@ interface PathChoice {
   id: string;              // 한 생에 한 번
   ages: [number, number];  // 이 나이 사이에서
   chance?: number;         // 조건이 맞는 해에 나올 확률 (기본 0.5)
-  from?, to?, born?        // 시대 조건 (realism SKILL)
+  from?, to?, bornFrom?, bornTo?        // 시대 조건 (realism SKILL)
   when?: (l) => boolean    // 형편 조건 (관심 분야, 성향, 학력, 직업…)
   prompt: string | (l) => string
   options: (l) => PathOption[]   // 형편에 따라 선택지가 달라진다
