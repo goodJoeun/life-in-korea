@@ -17,13 +17,14 @@ export function revealGap(yearSeconds: number, n: number): number {
 /** 문장 n개가 모두 나타나기까지 걸리는 시간(초) */
 export const revealDuration = (yearSeconds: number, n: number) => (n <= 1 ? 0 : revealGap(yearSeconds, n) * (n - 1));
 
-export default function LifeLog({ blocks, animate, yearSeconds = 4 }: { blocks: YearBlock[]; animate: boolean; yearSeconds?: number }) {
+/** instant: 선택을 기다리는 해. 문장을 늦추지 않고 한꺼번에 보여 준다 */
+export default function LifeLog({ blocks, animate, yearSeconds = 4, instant = false }: { blocks: YearBlock[]; animate: boolean; yearSeconds?: number; instant?: boolean }) {
   const lastId = blocks.length ? blocks[blocks.length - 1].id : -1;
   return (
     <section className={`log${animate ? '' : ' reviewing'}`} aria-live="polite">
       {blocks.map((b) => {
         const from = b.staggerFrom ?? 0;
-        const gap = animate && b.id === lastId ? revealGap(yearSeconds, b.entries.length - from) : 0;
+        const gap = animate && !instant && b.id === lastId ? revealGap(yearSeconds, b.entries.length - from) : 0;
         return (
           <div key={b.id} className="yr">
             <div className="yr-when">

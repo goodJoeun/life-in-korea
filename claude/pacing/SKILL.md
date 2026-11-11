@@ -26,7 +26,8 @@ description: 플레이 시간 설계. 한 생의 길이(빠르게·보통·천�
 - **한 해 안에서 문장이 차례로** 나온다. 그해 문장이 n개면 1년의 70% 동안 고르게 나눠 하나씩 나타난다
   (최대 간격 4초). 막대는 그해 남은 시간을 보여 준다.
 - 저장된 설정(`lik.prefs.v1`)의 `yearSeconds` 는 `toYearSeconds()` 로 가장 가까운 값(2·4·6·10·15·20·30·45)으로 바꿔 쓴다.
-- 선택지는 그해 문장이 다 나타난 뒤에 보인다(`revealDuration`). 운에 맡기기는 그 뒤 최대 4초 기다린다.
+- 선택이 있는 해는 기다리지 않는다: 그해 문장을 늦추지 않고 한꺼번에 보여 주고(`LifeLog instant`), 선택지도 바로 뜬다.
+  운에 맡기기는 최대 4초(1년 길이의 30%) 기다린 뒤 고른다.
 
 ## 바꾼 파일
 
@@ -35,4 +36,4 @@ description: 플레이 시간 설계. 한 생의 길이(빠르게·보통·천�
 - `src/components/Hud.tsx` — 1년 길이 고르기
 - `src/components/Game.tsx` — 몰아 넘기기 조건
 - `src/components/LifeLog.tsx` — 문장 차례로 보이기 (`revealGap`, `YearBlock.staggerFrom`)
-- `src/components/ChoicePanel.tsx` — `delayMs`
+- `src/components/ChoicePanel.tsx` — `delayMs` (지금은 쓰지 않는다. 선택지는 바로 뜬다)

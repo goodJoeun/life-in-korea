@@ -245,7 +245,8 @@ export default function Game() {
   const waitingChoice = !!choice && !auto;
   // 그해 마지막 묶음의 문장이 다 나타나기까지 걸리는 시간. 선택지는 그 뒤에 보인다.
   const lastBlock = blocks[blocks.length - 1];
-  const revealMs = phase === 'playing' && lastBlock ? revealDuration(yearSeconds, lastBlock.entries.length - (lastBlock.staggerFrom ?? 0)) * 1000 : 0;
+  // 선택이 있는 해에는 문장을 늦춰 보여 주지 않고 선택지와 함께 바로 보여 준다
+  const revealMs = phase === 'playing' && lastBlock && !choice ? revealDuration(yearSeconds, lastBlock.entries.length - (lastBlock.staggerFrom ?? 0)) * 1000 : 0;
   const progressState: ProgressState = phase !== 'playing' || dead ? 'done' : waitingChoice ? 'choice' : paused ? 'paused' : 'running';
   useEffect(() => {
     const paint = () => {
@@ -398,7 +399,7 @@ export default function Game() {
       />
       <div className="game-body">
         <div className="game-main">
-          <LifeLog blocks={blocks} animate={phase === 'playing'} yearSeconds={yearSeconds} />
+          <LifeLog blocks={blocks} animate={phase === 'playing'} yearSeconds={yearSeconds} instant={!!choice} />
           {phase === 'review' && (
             <div className="review-actions">
               <button className="btn btn-primary" onClick={() => setPhase('ending')}>
@@ -409,7 +410,7 @@ export default function Game() {
               </button>
             </div>
           )}
-          {phase === 'playing' && choice && !dead && <ChoicePanel choice={choice} auto={auto} onPick={pick} onAutoChange={setAuto} delayMs={revealMs} />}
+          {phase === 'playing' && choice && !dead && <ChoicePanel choice={choice} auto={auto} onPick={pick} onAutoChange={setAuto} />}
         </div>
         {/* 넓은 화면: 오른쪽 고정 패널 / 휴대폰: '가족·자산' 버튼으로 여는 서랍 */}
         <div className={`side-wrap${sideOpen ? ' open' : ''}`} onClick={(e) => e.target === e.currentTarget && setSideOpen(false)}>
