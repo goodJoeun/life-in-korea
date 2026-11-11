@@ -83,6 +83,32 @@ function playOne(birthYear: number, seed: number, pickerName: string) {
       const as = pr.snapshot.assets;
       if (as && Math.abs(as.deposit + as.invest.stock + as.invest.global + as.invest.crypto - as.cash) > 2) fail('예금+투자 ≠ 쓸 수 있는 돈', `${where} ${JSON.stringify(as)}`);
     }
+    // 무작위 플레이어는 가끔 돈을 쓰고, 집을 사고팔고, 대출을 미리 갚는다 ({ d }·{ m } 동작)
+    if (pickerName === 'random' && life.independent && rnd() < 0.3) {
+      const snap = life.snapshot();
+      const can = snap.spend.filter((s) => s.state === 'ok');
+      const h = snap.housing;
+      const extra: LifeAction[] = [];
+      const offer = h?.offers.filter((o) => o.ok) ?? [];
+      if (offer.length && rnd() < 0.2) extra.push({ m: { t: 'buy', size: offer[Math.floor(rnd() * offer.length)].size } });
+      else if (h && h.repayMax >= 1 && rnd() < 0.3) extra.push({ m: { t: 'repay', amt: Math.ceil(h.repayMax * rnd()) } });
+      else if (h?.sell && rnd() < 0.05) extra.push({ m: { t: 'sell' } });
+      else if (can.length) extra.push({ d: can[Math.floor(rnd() * can.length)].id });
+      for (const x of extra) {
+        const before = life.cash;
+        const xr = applyAction(life, x);
+        if (!xr) { fail('돈 쓰기·자산 관리 동작 실패', `${where} ${JSON.stringify(x)}`); return; }
+        actions.push(x);
+        checkResult(where, life, xr);
+        if ('d' in (x as object) && !(life.cash < before && life.cash >= -1)) fail('돈 쓰기 뒤 잔액이 이상함', `${where} ${before} → ${life.cash}`);
+        if (life.house && life.house.debt < 0) fail('대출이 음수', where);
+      }
+      if (life.snapshot().spendLeft < 0) fail('한 해 돈 쓰기 횟수 넘음', where);
+      // 할 수 없는 동작은 받아들이지 않아야 한다
+      if (life.spendOn('없는-항목') !== null) fail('없는 항목에 돈을 씀', where);
+      const done = life.snapshot().spend.find((s) => s.state !== 'ok');
+      if (done && life.spendOn(done.id) !== null) fail('할 수 없는 돈 쓰기가 통과함', `${where} ${done.id} ${done.state}`);
+    }
     const a: LifeAction = res.choice ? PICKERS[pickerName](life, res, rnd) : 'n';
     const next = applyAction(life, a);
     if (!next) { fail('적용할 수 없는 동작', `${where} ${JSON.stringify(a)}`); return; }

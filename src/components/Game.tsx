@@ -5,7 +5,7 @@
  * 인생 자체(Life)는 엔진 객체라 ref 에 두고, 화면에 필요한 것만 state 로 옮겨 그린다.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createLife, Life, type ChoiceView, type MoneyPlan, type Snapshot, type Stats, type Summary, type YearResult } from '@/lib/engine';
+import { createLife, Life, type AssetAction, type ChoiceView, type MoneyPlan, type Snapshot, type Stats, type Summary, type YearResult } from '@/lib/engine';
 import {
   clearSavedLife, DEFAULT_YEAR_SECONDS, FAST_YEAR_SECONDS, toYearSeconds, loadPastLives, loadPrefs, loadSavedLife, savePastLives, savePrefs, saveLife,
   type LifeAction, type PastLife, type SavedLife, type YearSeconds,
@@ -230,6 +230,28 @@ export default function Game() {
     [applyResult],
   );
 
+  // 내 돈 쓰기, 집 사고팔기·대출 갚기: 엔진이 받아들인 동작만 기록에 남긴다
+  const spend = useCallback(
+    (id: string) => {
+      const life = lifeRef.current;
+      const res = life && life.alive ? life.spendOn(id) : null;
+      if (!res) return;
+      actionsRef.current.push({ d: id });
+      applyResult(res);
+    },
+    [applyResult],
+  );
+  const manage = useCallback(
+    (act: AssetAction) => {
+      const life = lifeRef.current;
+      const res = life && life.alive ? life.manage(act) : null;
+      if (!res) return;
+      actionsRef.current.push({ m: act });
+      applyResult(res);
+    },
+    [applyResult],
+  );
+
   const discardSaved = useCallback(() => {
     clearSavedLife();
     setSaved(null);
@@ -414,7 +436,13 @@ export default function Game() {
         </div>
         {/* 넓은 화면: 오른쪽 고정 패널 / 휴대폰: '가족·자산' 버튼으로 여는 서랍 */}
         <div className={`side-wrap${sideOpen ? ' open' : ''}`} onClick={(e) => e.target === e.currentTarget && setSideOpen(false)}>
-          <SidePanel snap={snap} onClose={() => setSideOpen(false)} onPlan={phase === 'playing' && !dead ? changePlan : undefined} />
+          <SidePanel
+            snap={snap}
+            onClose={() => setSideOpen(false)}
+            onPlan={phase === 'playing' && !dead ? changePlan : undefined}
+            onSpend={phase === 'playing' && !dead ? spend : undefined}
+            onManage={phase === 'playing' && !dead ? manage : undefined}
+          />
         </div>
       </div>
     </main>

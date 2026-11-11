@@ -221,7 +221,28 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .money-rows small { font-size: 11.5px; font-weight: 600; }
 .money-rows small.up { color: var(--good); }
 .money-rows small.down { color: var(--bad); }
-.money-toggle { margin: 6px 0 4px; font-weight: 600; color: var(--blue); }
+.money-toggle { margin: 10px 0 6px; padding: 7px 16px; font-size: 13px; width: 100%; }
+.money-bar { display: flex; height: 8px; border-radius: 999px; overflow: hidden; margin: 0 0 8px; background: var(--paper-2); }
+.money-bar i { display: block; height: 100%; }
+.bar-deposit { background: var(--blue); }
+.bar-stock { background: var(--accent); }
+.bar-global { background: var(--good); }
+.bar-crypto { background: #b08a2e; }
+.bar-house { background: var(--ink-3); }
+.money-actions.wrap { flex-wrap: wrap; }
+.house-offers, .spend-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+.spend-left { margin: 0 0 8px; font-size: 13px; color: var(--ink-2); }
+.spend-left small { color: var(--ink-3); }
+.spend-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.spend-item {
+  width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 10px; text-align: left;
+  border: 1px solid var(--line); background: #fff; border-radius: 10px; padding: 8px 10px; font-size: 13.5px;
+}
+.spend-item:hover:not(:disabled) { border-color: var(--ink); }
+.spend-item:disabled { opacity: .5; cursor: default; }
+.spend-item small { display: block; font-size: 11.5px; color: var(--ink-3); font-weight: 400; line-height: 1.35; }
+.spend-name b { font-weight: 600; }
+.spend-cost { flex-shrink: 0; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
 .money-edit { background: var(--paper); border-radius: 10px; padding: 10px 12px; margin: 4px 0 8px; }
 .money-edit h4 { margin: 4px 0 6px !important; }
 .money-spend { display: flex; gap: 6px; flex-wrap: wrap; }

@@ -1,5 +1,6 @@
-import type { MoneyPlan, Snapshot } from '@/lib/engine';
+import type { AssetAction, MoneyPlan, Snapshot } from '@/lib/engine';
 import MoneyPanel from './MoneyPanel';
+import SpendPanel from './SpendPanel';
 import TraitBars from './TraitBars';
 import { won } from '@/lib/text';
 
@@ -9,6 +10,10 @@ interface Props {
   onClose?: () => void;
   /** 돈 관리 계획 바꾸기 (게임 중에만) */
   onPlan?: (plan: MoneyPlan) => void;
+  /** 내 돈 쓰기 (게임 중에만) */
+  onSpend?: (id: string) => void;
+  /** 집 사고팔기·대출 갚기 (게임 중에만) */
+  onManage?: (act: AssetAction) => void;
 }
 
 const SPOUSE_STATUS = { married: '', widowed: '사별', divorced: '이혼' } as const;
@@ -22,7 +27,7 @@ function Row({ label, value, tone }: { label: string; value: string; tone?: 'plu
   );
 }
 
-export default function SidePanel({ snap, onClose, onPlan }: Props) {
+export default function SidePanel({ snap, onClose, onPlan, onSpend, onManage }: Props) {
   const { family: f, assets: a } = snap;
   const spouseWord = f.spouse ? (snap.sex === 'M' ? '아내' : '남편') : '배우자';
   const income = a ? a.income.self + a.income.spouse + a.income.pension : 0;
@@ -80,7 +85,7 @@ export default function SidePanel({ snap, onClose, onPlan }: Props) {
               <span>순자산</span>
               {won(a.netWorth)}
             </p>
-            <MoneyPanel snap={snap} assets={a} onPlan={onPlan} />
+            <MoneyPanel snap={snap} assets={a} onPlan={onPlan} onManage={onManage} />
             <dl>
               <Row label="집" value={a.house ? `자가 · ${won(a.house.price)}` : snap.age >= 25 ? '전·월세' : '—'} />
               {a.house && a.house.debt > 0 && <Row label="주택 대출" value={won(a.house.debt)} tone="minus" />}
@@ -102,6 +107,13 @@ export default function SidePanel({ snap, onClose, onPlan }: Props) {
           </p>
         )}
       </section>
+
+      {a && onSpend && snap.spend.length > 0 && (
+        <section className="side-card">
+          <h3>돈 쓰기</h3>
+          <SpendPanel snap={snap} onSpend={onSpend} />
+        </section>
+      )}
 
       <section className="side-card side-me">
         <h3>나는 이런 사람</h3>

@@ -5,7 +5,7 @@
  * 슬라이더는 초안만 바꾸고, '적용'을 눌러야 엔진에 반영된다(되살리기 동작이 하나만 남게).
  */
 import { useEffect, useState } from 'react';
-import type { AssetView, InvestKind, MoneyPlan, Snapshot, Spend } from '@/lib/engine';
+import type { AssetAction, AssetView, InvestKind, MoneyPlan, Snapshot, Spend } from '@/lib/engine';
 import { won } from '@/lib/text';
 
 const KINDS: { key: InvestKind; label: string; from: number; note: string }[] = [
@@ -23,12 +23,25 @@ interface Props {
   snap: Snapshot;
   assets: AssetView;
   onPlan?: (plan: MoneyPlan) => void;
+  /** 집 사고팔기·대출 미리 갚기 */
+  onManage?: (act: AssetAction) => void;
 }
+
+/** 대출을 미리 갚을 때 고르는 금액 (만원) */
+const REPAY_STEPS = [1000, 5000];
 
 const pct = (r: number) => `${r >= 0 ? '+' : ''}${Math.round(r * 100)}%`;
 
-export default function MoneyPanel({ snap, assets: a, onPlan }: Props) {
+export default function MoneyPanel({ snap, assets: a, onPlan, onManage }: Props) {
   const [open, setOpen] = useState(false);
+  const [selling, setSelling] = useState(false);
+  const h = snap.housing;
+  const total = Math.max(0, a.deposit) + a.invest.stock + a.invest.global + a.invest.crypto + (a.house ? a.house.price : 0);
+  const parts = ([
+    ['예금', 'deposit', Math.max(0, a.deposit)], ['국내 주식', 'stock', a.invest.stock], ['해외 주식', 'global', a.invest.global],
+    ['코인', 'crypto', a.invest.crypto], ['집', 'house', a.house ? a.house.price : 0],
+  ] as [string, string, number][]).filter((p) => p[2] > 0);
+  const share = (v: number) => Math.round((v / total) * 100);
   const [draft, setDraft] = useState<MoneyPlan>(snap.plan);
   const planKey = JSON.stringify(snap.plan);
   // 갈림길 등으로 계획이 바뀌면 초안도 따라간다
@@ -45,6 +58,13 @@ export default function MoneyPanel({ snap, assets: a, onPlan }: Props) {
 
   return (
     <div className="money">
+      {total > 0 && (
+        <div className="money-bar" role="img" aria-label={parts.map((p) => `${p[0]} ${share(p[2])}%`).join(', ')}>
+          {parts.map((p) => (
+            <i key={p[1]} className={`bar-${p[1]}`} style={{ width: `${(p[2] / total) * 100}%` }} title={`${p[0]} ${share(p[2])}%`} />
+          ))}
+        </div>
+      )}
       <dl className="money-rows">
         <div>
           <dt>{a.deposit >= 0 ? '예금' : '빚'}</dt>
@@ -65,8 +85,8 @@ export default function MoneyPanel({ snap, assets: a, onPlan }: Props) {
       </dl>
 
       {onPlan && (
-        <button className="btn-link money-toggle" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-          {open ? '돈 관리 닫기' : '돈 관리'}
+        <button className="btn money-toggle" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+          {open ? '자산 관리 닫기' : '자산 관리'}
         </button>
       )}
       {open && onPlan && (
@@ -110,6 +130,69 @@ export default function MoneyPanel({ snap, assets: a, onPlan }: Props) {
               되돌리기
             </button>
           </div>
+
+          {h && onManage && (
+            <>
+              <h4>집</h4>
+              {a.house ? (
+                <>
+                  {a.house.debt > 0 && (
+                    <>
+                      <p className="side-note">대출 {won(a.house.debt)}이 남았다. 해마다 이자가 4% 붙는다. 미리 갚으면 이자가 준다.</p>
+                      <div className="money-actions wrap">
+                        {REPAY_STEPS.filter((v) => v < h.repayMax).map((v) => (
+                          <button key={v} className="btn" onClick={() => onManage({ t: 'repay', amt: v })}>
+                            {won(v)} 갚기
+                          </button>
+                        ))}
+                        <button className="btn" disabled={h.repayMax < 1} onClick={() => onManage({ t: 'repay', amt: h.repayMax })}>
+                          {h.repayMax >= a.house.debt ? '모두 갚기' : h.repayMax >= 1 ? `${won(h.repayMax)} 갚기` : '갚을 돈이 없다'}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                  {h.sell && (
+                    <div className="money-actions wrap">
+                      {selling ? (
+                        <>
+                          <button className="btn btn-primary" onClick={() => { setSelling(false); onManage({ t: 'sell' }); }}>
+                            판다 (손에 {won(h.sell.gain)})
+                          </button>
+                          <button className="btn" onClick={() => setSelling(false)}>
+                            그만둔다
+                          </button>
+                        </>
+                      ) : (
+                        <button className="btn" onClick={() => setSelling(true)}>
+                          집 팔기
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {selling && h.sell && <p className="side-note">수수료와 세금으로 {won(h.sell.fee)}이 든다. 팔고 나면 전·월세로 산다.</p>}
+                </>
+              ) : h.offers.length ? (
+                <>
+                  <ul className="house-offers">
+                    {h.offers.map((o) => (
+                      <li key={o.size}>
+                        <button className="spend-item" disabled={!o.ok} onClick={() => onManage({ t: 'buy', size: o.size })}>
+                          <span className="spend-name">
+                            <b>{o.label}</b>
+                            <small>{o.ok ? `내 돈 ${won(o.down)} + 대출 ${won(o.loan)}` : `내 돈 ${won(o.down)}이 있어야 한다`}</small>
+                          </span>
+                          <span className="spend-cost">{won(o.price)}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="side-note">{snap.residence} 집값. 대출은 30년에 걸쳐 갚는다.</p>
+                </>
+              ) : (
+                <p className="side-note">아직 집을 살 나이가 아니다.</p>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>

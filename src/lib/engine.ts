@@ -21,6 +21,7 @@ import {
   availableIn, stageOf, type Dated, type Effect, type InterestKey, type StatKey, type TraitKey,
 } from './content';
 import { PATHS, type PathChoice, type PathOption } from './paths';
+import { SPEND_PER_YEAR, SPENDS, type SpendGroup, type SpendItem } from './spend';
 import { childSexRatio, isRegionId, maleShare, nationalSexRatio, regionBirthWeights, sexRatio, type RegionId } from './births';
 import { namesFor } from './names';
 import { Rng } from './random';
@@ -64,6 +65,35 @@ export const SPEND_RATE: Record<Spend, number> = { frugal: 0.6, normal: 0.7, loo
 /** 같은 해에도 사람마다 다른 수익 (종목 차이) */
 const INVEST_NOISE: Record<InvestKind, number> = { stock: 0.08, global: 0.03, crypto: 0.25 };
 
+// ───────── 내 돈 쓰기 (claude/spend/SKILL.md) ─────────
+/** ok: 할 수 있다 · done: 올해 이미 했다 · limit: 올해 횟수를 다 썼다 · poor: 돈이 모자란다 */
+export type SpendState = 'ok' | 'done' | 'limit' | 'poor';
+export interface SpendView {
+  id: string; group: SpendGroup; label: string; desc: string;
+  /** 그해 드는 돈 (만원) */
+  cost: number;
+  fx: Partial<Record<StatKey, number>>;
+  state: SpendState;
+}
+/** 이미 높은 수치는 돈을 써도 덜 오른다: 65 이하 100%, 80에서 50%, 90 넘으면 15% */
+const spendGain = (cur: number) => Math.max(0.15, Math.min(1, (95 - cur) / 30));
+
+// ───────── 자산 관리: 집 사고팔기, 대출 미리 갚기 (claude/money/SKILL.md) ─────────
+export type HouseSize = 'small' | 'mid' | 'large';
+/** [크기, 이름, 그 지역 보통 집값에 곱하는 값] */
+const HOUSE_SIZES: [HouseSize, string, number][] = [['small', '작은 집', 0.75], ['mid', '보통 집', 1], ['large', '넓은 집', 1.35]];
+/** 집을 팔 때 드는 중개 수수료·세금 (추정) */
+const SELL_FEE = 0.02;
+export type AssetAction = { t: 'buy'; size: HouseSize } | { t: 'sell' } | { t: 'repay'; amt: number };
+export interface HousingView {
+  /** 지금 살 수 있는 집 (집이 있으면 비어 있다) */
+  offers: { size: HouseSize; label: string; price: number; down: number; loan: number; ok: boolean }[];
+  /** 집을 팔면 손에 남는 돈 */
+  sell: { gain: number; fee: number } | null;
+  /** 지금 미리 갚을 수 있는 대출 */
+  repayMax: number;
+}
+
 /** 금액은 모두 만원, 2024년 가치 */
 export interface AssetView {
   netWorth: number;
@@ -93,6 +123,12 @@ export interface Snapshot {
   investOpen: Record<InvestKind, boolean>;
   /** 지난해 실질 수익률 (들고 있던 것만) */
   lastReturn: Partial<Record<InvestKind, number>>;
+  /** 내 돈으로 할 수 있는 일 (독립 전에는 비어 있다) */
+  spend: SpendView[];
+  /** 올해 더 할 수 있는 횟수 */
+  spendLeft: number;
+  /** 집 사고팔기·대출 갚기 (독립 전에는 null) */
+  housing: HousingView | null;
 }
 /** 직접 고른 선택 하나 (결과 리포트의 '인생의 갈림길') */
 export interface TurningPoint { age: number; year: number; prompt: string; label: string; kind: ChoiceKind }
@@ -158,6 +194,12 @@ interface Flags {
   // ── 대학원·고시 (공부하는 동안 studyUntil 까지 일하지 않는다) ──
   study?: 'master' | 'phd' | 'exam'; studyUntil?: number; degree?: 'master' | 'phd';
   abroad?: boolean; examName?: string; examTries?: number;
+  // ── 내 돈 쓰기 ──
+  /** 마지막으로 건강검진을 받은 나이 */
+  checkup?: number;
+  passport?: boolean;
+  /** 집을 가져 본 적이 있다 */
+  homeOnce?: boolean;
 }
 
 /**
@@ -334,6 +376,9 @@ export class Life {
   plan: MoneyPlan = { spend: 'normal', alloc: { ...DEFAULT_PLAN.alloc } };
   invest: Record<InvestKind, number> = { stock: 0, global: 0, crypto: 0 };
   lastReturn: Partial<Record<InvestKind, number>> = {};
+  /** 내 돈 쓰기: 항목별로 마지막에 한 나이, 올해 한 횟수 */
+  private spendAge: Record<string, number> = {};
+  private spendCount = { age: -1, n: 0 };
 
   constructor(opts: LifeOptions = {}) {
     this.seed = (opts.seed === undefined ? Math.floor(Math.random() * 2 ** 32) : opts.seed) >>> 0;
@@ -481,6 +526,116 @@ export class Life {
       }
     }
     this.cash = deposit + this.invest.stock + this.invest.global + this.invest.crypto;
+  }
+
+  // ───────── 내 돈 쓰기 ─────────
+  /** 그해 드는 돈: 2024년 가치에 그해 실질임금 지수를 곱한다 (아주 옛날에도 30%는 든다) */
+  private spendCost(it: SpendItem) { return Math.max(1, Math.round(it.cost * Math.max(0.3, this.wage))); }
+  get spendLeft() { return SPEND_PER_YEAR - (this.spendCount.age === this.age ? this.spendCount.n : 0); }
+  private spendState(it: SpendItem): SpendState {
+    if (this.spendAge[it.id] === this.age) return 'done';
+    if (this.spendLeft <= 0) return 'limit';
+    return this.cash < this.spendCost(it) ? 'poor' : 'ok';
+  }
+  spendMenu(): SpendView[] {
+    if (!this.independent || !this.alive) return [];
+    return SPENDS.filter((it) => this.eventFits(it)).map((it) => ({
+      id: it.id, group: it.group, label: it.label, desc: it.desc, cost: this.spendCost(it), fx: it.fx, state: this.spendState(it),
+    }));
+  }
+  /**
+   * 내 돈으로 무언가를 한다 (화면의 '돈 쓰기', 되살리기 동작 { d: id }).
+   * 지금 할 수 없으면(돈이 모자람, 올해 이미 함, 시대가 안 맞음) null.
+   */
+  spendOn(id: string): YearResult | null {
+    const it = SPENDS.find((x) => x.id === id);
+    if (!it || !this.alive || !this.independent || !this.eventFits(it) || this.spendState(it) !== 'ok') return null;
+    const cost = this.spendCost(it);
+    this.current = { entries: [] };
+    this.cash -= cost;
+    this.spendAge[it.id] = this.age;
+    this.spendCount = { age: this.age, n: SPEND_PER_YEAR - this.spendLeft + 1 };
+    this.log(`→ ${it.label} (${won(cost)})`, 'pick');
+    this.log(this.r.pick(availableIn(it.texts, this.year)), (it.fx.happiness ?? 0) >= 4 ? 'good' : 'event');
+    for (const k of Object.keys(it.fx) as StatKey[]) {
+      const d = it.fx[k] ?? 0;
+      this.stats[k] = clamp(this.stats[k] + (d > 0 ? d * spendGain(this.stats[k]) : d));
+    }
+    it.then?.(this);
+    return this.finishYear(true);
+  }
+
+  // ───────── 자산 관리: 집 ─────────
+  /** 집값 가운데 내 돈으로 내야 하는 몫. 2000년 전에는 주택담보대출이 드물었고, 55세가 넘으면 오래 갚는 대출을 받기 어렵다 (추정) */
+  private downShare() { return Math.max(this.year < 2000 ? 0.4 : 1 - D.mortgageLTV, this.age >= 55 ? 0.6 : 0); }
+  private houseOffers() {
+    if (this.house || !this.independent || this.age < 20) return [];
+    // 2000년 전 지방 집은 지금보다 훨씬 쌌다(시골집·단독주택 위주)
+    const ruralOld = this.residence.group === 'province' && this.year < 2000 ? 0.5 : 1;
+    const share = this.downShare();
+    return HOUSE_SIZES.map(([size, label, k]) => {
+      const base = this.houseBasePrice() * k * ruralOld;
+      const price = base * this.houseIndex();
+      const down = price * share;
+      return { size, label, base, price, down, loan: price - down, ok: this.cash >= down };
+    });
+  }
+  private housingView(): HousingView | null {
+    if (!this.independent) return null;
+    const h = this.house;
+    const fee = h ? this.housePrice * SELL_FEE : 0;
+    return {
+      offers: this.houseOffers().map(({ base: _b, ...o }) => ({ ...o, price: Math.round(o.price), down: Math.ceil(o.down), loan: Math.round(o.loan) })),
+      sell: h ? { gain: Math.round(this.housePrice - h.debt - fee), fee: Math.round(fee) } : null,
+      repayMax: h ? Math.max(0, Math.floor(Math.min(h.debt, this.cash))) : 0,
+    };
+  }
+  /**
+   * 집을 사거나 팔고, 대출을 미리 갚는다 (화면의 '자산 관리', 되살리기 동작 { m }).
+   * 지금 할 수 없으면 null.
+   */
+  manage(act: AssetAction): YearResult | null {
+    if (!this.alive || !this.independent || !act) return null;
+    const begin = () => { this.current = { entries: [] }; };
+    if (act.t === 'buy') {
+      const o = this.houseOffers().find((x) => x.size === act.size);
+      if (!o || !o.ok) return null;
+      begin();
+      this.log(`→ ${this.residence.name}에 ${josa(o.label, '을/를')} 산다`, 'pick');
+      this.cash -= o.down;
+      this.house = { base: o.base, debt: o.loan, loan: o.loan, boughtAge: this.age };
+      if (!this.flags.homeOnce) this.apply({ happiness: 6 });
+      this.flags.homeOnce = true;
+      this.log(o.loan > 0 ? `내 집을 마련했다. 대출은 ${won(o.loan)}.` : '내 집을 마련했다.', 'milestone');
+      this.fact('house');
+      return this.finishYear(true);
+    }
+    const h = this.house;
+    if (!h) return null;
+    if (act.t === 'sell') {
+      begin();
+      const price = this.housePrice;
+      this.log('→ 집을 판다', 'pick');
+      this.cash += price * (1 - SELL_FEE) - h.debt;
+      this.house = null;
+      this.log(`살던 집을 지금 돈으로 ${won(price)}에 팔았다.${h.debt > 0 ? ' 남은 대출을 갚았다.' : ''} 다시 전·월세로 살게 됐다.`, 'milestone');
+      return this.finishYear(true);
+    }
+    if (act.t === 'repay') {
+      const amt = Math.min(Number.isFinite(act.amt) ? act.amt : 0, h.debt, this.cash);
+      if (!(amt >= 1)) return null;
+      begin();
+      this.log(`→ 대출을 미리 갚는다 (${won(amt)})`, 'pick');
+      this.cash -= amt;
+      h.debt -= amt;
+      if (h.debt < 1) {
+        h.debt = 0;
+        this.apply({ happiness: 3 });
+        this.log('주택 대출을 모두 갚았다. 이제 온전히 내 집이 됐다.', 'good');
+      } else this.log(`모아 둔 돈으로 대출 ${won(amt)}을 미리 갚았다. 남은 대출은 ${won(h.debt)}.`);
+      return this.finishYear(true);
+    }
+    return null;
   }
 
   /** 갈림길에서 새 일을 시작한다 */
@@ -751,6 +906,9 @@ export class Life {
       plan: { spend: this.plan.spend, alloc: { ...this.plan.alloc } },
       investOpen: { stock: this.year >= INVEST_FROM.stock, global: this.year >= INVEST_FROM.global, crypto: this.year >= INVEST_FROM.crypto },
       lastReturn: { ...this.lastReturn },
+      spend: this.spendMenu(),
+      spendLeft: this.independent ? this.spendLeft : 0,
+      housing: this.housingView(),
     };
   }
 
@@ -1581,7 +1739,7 @@ export class Life {
     // 2000년 이전에는 주택담보대출이 드물어 목돈이 더 필요했다
     // 대신 전세를 끼고 사는 경우가 많았다
     // 55세가 넘으면 오래 갚는 대출을 받기 어려워 목돈이 더 필요하다 (추정)
-    const downShare = Math.max(this.year < 2000 ? 0.4 : 1 - D.mortgageLTV, this.age >= 55 ? 0.6 : 0);
+    const downShare = this.downShare();
     const help = !this.flags.parentHelpUsed && this.quintile >= 4 ? [0, 0, 0, 5000, 18000][this.quintile - 1] * this.wage : 0;
     if (this.cash + help < price * downShare || !this.r.chance(0.4)) return false;
     this.ask(`${this.residence.name}에 마음에 드는 집이 나왔다. (지금 돈으로 ${won(price)})`, [
@@ -1593,6 +1751,7 @@ export class Life {
           this.cash -= down;
           const debt = price - down;
           this.house = { base, debt, loan: debt, boughtAge: this.age };
+          this.flags.homeOnce = true;
           this.apply({ happiness: 6 });
           this.log(debt > 0 ? `내 집을 마련했다. 대출은 ${won(debt)}.` : '내 집을 마련했다.', 'milestone');
           this.fact('house');
@@ -1776,6 +1935,7 @@ export class Life {
       if (takesHouse) {
         const base = this.houseBasePrice() * 0.5;
         this.house = { base, debt: 0, loan: 0, boughtAge: a };
+        f.homeOnce = true;
         this.log('부모님이 돌아가셨다. 고향 집을 물려받았다.', 'bad');
       } else {
         this.log('부모님이 돌아가셨다.' + (inherit > 3000 ? ` 남기신 재산 중 지금 돈으로 ${won(inherit)}을 물려받았다.` : ''), 'bad');
@@ -1805,9 +1965,11 @@ export class Life {
     if (a >= 30 && f.cancerAge === undefined && r.chance(0.00085 * Math.exp(0.065 * (a - 30)))) {
       f.cancerAge = a;
       const kinds = CANCERS.filter((c) => !(c === '유방암' && this.sex === 'M') && !(c === '전립선암' && this.sex === 'F'));
-      this.log(`${r.pick(kinds)} 진단을 받았다.`, 'bad');
-      this.apply({ health: -22, happiness: -10 });
-      this.cash -= 1200 * this.wage;
+      // 건강검진을 받아 온 사람은 일찍 발견해 덜 앓는다 (내 돈 쓰기의 건강검진)
+      const early = f.checkup !== undefined && a - f.checkup <= 2;
+      this.log(`${r.pick(kinds)} 진단을 받았다.${early ? ' 건강검진에서 일찍 찾은 덕에 수술로 끝났다.' : ''}`, 'bad');
+      this.apply(early ? { health: -12, happiness: -7 } : { health: -22, happiness: -10 });
+      this.cash -= (early ? 700 : 1200) * this.wage;
       this.fact('cancer');
     } else if (a >= 40 && r.chance(0.02)) {
       this.log(r.pick(['고혈압 진단을 받았다.', '당뇨 진단을 받았다.', '협심증으로 시술을 받았다.', '허리 수술을 받았다.']), 'bad');
