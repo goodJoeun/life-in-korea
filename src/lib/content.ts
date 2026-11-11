@@ -41,7 +41,7 @@ export const CANCERS = ['위암', '대장암', '폐암', '갑상선암', '유방
 
 // 단계별 무작위 사건. 같은 문장은 한 생에 한 번만 나온다.
 // 해마다 일어나는 사건과 작은 갈림길은 events.ts 에 있다.
-export { DILEMMAS, LIFE_EVENTS, RANDOM_EVENTS, type Dilemma, type RandomEvent } from './events';
+export { DILEMMAS, FAMILY_FORTUNE, LIFE_EVENTS, RANDOM_EVENTS, type Dilemma, type RandomEvent } from './events';
 
 export function stageOf(age: number): Stage {
   if (age <= 6) return 'child';
