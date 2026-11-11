@@ -1248,9 +1248,11 @@ export class Life {
     }
   }
 
-  private eventFits(e: { ages?: [number, number]; from?: number; to?: number; when?: (l: Life) => boolean }) {
-    const y = this.year;
-    return (e.from ?? -Infinity) <= y && y <= (e.to ?? Infinity) && (!e.ages || (e.ages[0] <= this.age && this.age <= e.ages[1])) && (!e.when || e.when(this));
+  private eventFits(e: { ages?: [number, number]; from?: number; to?: number; bornFrom?: number; bornTo?: number; when?: (l: Life) => boolean }) {
+    const y = this.year, b = this.birthYear;
+    return (e.from ?? -Infinity) <= y && y <= (e.to ?? Infinity)
+      && (e.bornFrom ?? -Infinity) <= b && b <= (e.bornTo ?? Infinity)
+      && (!e.ages || (e.ages[0] <= this.age && this.age <= e.ages[1])) && (!e.when || e.when(this));
   }
 
   private randomEvent() {
