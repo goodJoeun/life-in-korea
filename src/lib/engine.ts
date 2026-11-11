@@ -155,6 +155,8 @@ interface Flags {
  * 그래야 진학·취업·사망률 같은 통계 보정이 그대로 유지된다. 돈(cash)은 그대로.
  */
 const EVENT_STAT_SCALE = 0.6;
+/** 한 번에 보여 주는 선택지 수의 상한 */
+export const MAX_OPTIONS = 5;
 
 const EDU_ORDER: EduTier[] = ['elementary', 'middle', 'highschool', 'college2', 'local4', 'capital4', 'top4'];
 /** 배우자 직업: 학력 무리별 직업 비중 (추정: 학력별 취업 분포 근사) */
@@ -354,7 +356,8 @@ export class Life {
     if (fx.cash) this.cash += fx.cash * this.wage;
   }
   private ask(prompt: string, options: Option[], kind: ChoiceKind = 'core') {
-    this.pending = { prompt, options, kind };
+    // 선택지는 많아야 다섯 개 (넘는 갈림길은 fewOptions 로 미리 줄인다. 이건 안전장치)
+    this.pending = { prompt, options: options.slice(0, MAX_OPTIONS), kind };
     this.log(prompt, 'choice');
   }
 
@@ -486,8 +489,23 @@ export class Life {
     }
     this.usedEvents.add(`path:${p.id}`);
     const prompt = typeof p.prompt === 'function' ? p.prompt(this) : p.prompt;
-    const opts = p.options(this);
-    this.ask(prompt, opts.map((o) => ({ label: o.label, desc: o.desc, auto: this.leanWeight(o), run: () => this.runPathOption(o) })), 'path');
+    const opts = p.options(this).map((o) => ({ label: o.label, desc: o.desc, auto: this.leanWeight(o), run: () => this.runPathOption(o) }));
+    this.ask(prompt, this.fewOptions(opts), 'path');
+  }
+
+  /**
+   * 선택지가 MAX_OPTIONS 개를 넘으면 그만큼만 남긴다. 성향·관심에 맞는 것(운에 맡기기 가중치가 큰 것)이 더 잘 남고,
+   * 남은 것은 원래 순서를 지킨다.
+   */
+  private fewOptions(opts: Option[]): Option[] {
+    if (opts.length <= MAX_OPTIONS) return opts;
+    const pool = opts.map((o, i) => [i, o.auto ?? 1] as [number, number]);
+    const keep: number[] = [];
+    while (keep.length < MAX_OPTIONS) {
+      const [i] = this.r.weighted(pool.filter(([j]) => !keep.includes(j)));
+      keep.push(i);
+    }
+    return keep.sort((a, b) => a - b).map((i) => opts[i]);
   }
 
   private runPathOption(o: PathOption) {
@@ -910,9 +928,15 @@ export class Life {
     if (this.flags.vocational) {
       this.log(`${vocationalSchoolName(this.year)} 3학년, 현장실습을 나갔다.`);
       const canCollege = this.tierFor(score + 8, this.year + 1) !== null;
+      // 전문대에 갈 점수가 안 되면 고를 것이 없으니 묻지 않고 바로 취업한다
+      if (!canCollege) {
+        this.log('졸업하고 바로 일자리를 구하기로 했다.');
+        this.skipCollege();
+        return;
+      }
       this.ask('졸업 후 진로를 정해야 한다.', [
         { label: '바로 취업한다', desc: '고졸 채용에 지원한다', auto: 6, run: () => this.skipCollege() },
-        ...(canCollege ? [{ label: '전문대에 진학한다', desc: '2년 더 배운다', auto: 3, run: () => this.enterCollege('college2', 19) }] : []),
+        { label: '전문대에 진학한다', desc: '2년 더 배운다', auto: 3, run: () => this.enterCollege('college2', 19) },
       ]);
       return;
     }

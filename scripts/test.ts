@@ -6,7 +6,7 @@
  * 확인하는 것: 예외 없이 끝까지 사는지, 되살리기가 같은 생을 만드는지, 기록 문장이 시대·세대에 맞는지,
  * 수치가 범위 안인지, 조사 실패·undefined 같은 흔적이 없는지.
  */
-import { createLife, type Life, type YearResult } from '../src/lib/engine';
+import { createLife, MAX_OPTIONS, type Life, type YearResult } from '../src/lib/engine';
 import { applyAction, replayLife, type LifeAction } from '../src/lib/replay';
 import { MAX_BIRTH_YEAR, MIN_BIRTH_YEAR } from '../src/lib/timeline';
 
@@ -48,6 +48,8 @@ const fail = (kind: string, msg: string) => {
 };
 
 function checkResult(where: string, life: Life, res: YearResult) {
+  if (res.choice && res.choice.options.length > MAX_OPTIONS) fail(`선택지 ${MAX_OPTIONS}개 넘음`, `${where} ${res.choice.options.length}개 "${res.choice.prompt}"`);
+  if (res.choice && res.choice.options.length < 2) fail('선택지가 하나뿐', `${where} "${res.choice.prompt}"`);
   for (const e of res.entries) {
     if (BROKEN.test(e.text)) fail(`깨진 문장: ${e.text.slice(0, 30)}`, `${where} ${e.text}`);
     for (const r of ERA_RULES) {
