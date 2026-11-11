@@ -16,8 +16,8 @@
  */
 import { KDATA as D, type EduTier, type JobType, type RegionGroup, type Sex } from './data';
 import {
-  CANCERS, DILEMMAS, DREAMS, FAMILY_FORTUNE, INTEREST_CERTS, INTEREST_DREAMS, INTEREST_LATE_JOBS, INTEREST_TITLES, INTERESTS, JOB_TITLES,
-  LIFE_EVENTS, MEETING_PLACES, MILITARY_BASES, RANDOM_EVENTS, TRAITS, type Dilemma, type RandomEvent,
+  CANCERS, DILEMMAS, DREAMS, EXAMS, FAMILY_FORTUNE, INTEREST_CERTS, INTEREST_DREAMS, INTEREST_LATE_JOBS, INTEREST_TITLES, INTERESTS, JOB_TITLES,
+  LIFE_EVENTS, MEETING_PLACES, MILITARY_BASES, RANDOM_EVENTS, RESEARCH_FIELDS, TALENTS, TRAITS, type Exam, type Dilemma, type RandomEvent,
   availableIn, stageOf, type Dated, type Effect, type InterestKey, type StatKey, type TraitKey,
 } from './content';
 import { PATHS, type PathChoice, type PathOption } from './paths';
@@ -148,6 +148,16 @@ interface Flags {
   car?: boolean; phone?: boolean;
   /** 집안 형편이 마지막으로 바뀐 나이 */
   fortuneAge?: number;
+  // ── 군 복무 선택 ──
+  /** 입대 방법을 이미 물었다 (미뤄 둔 입대는 다시 묻지 않는다) */
+  militaryAsked?: boolean;
+  /** ROTC로 임관한다 */
+  officer?: boolean;
+  // ── 예체능 재능 (content.ts 의 TALENTS) ──
+  talent?: 'art' | 'sport'; talentIdx?: number; talentWins?: number; artsSchool?: boolean; proTried?: boolean;
+  // ── 대학원·고시 (공부하는 동안 studyUntil 까지 일하지 않는다) ──
+  study?: 'master' | 'phd' | 'exam'; studyUntil?: number; degree?: 'master' | 'phd';
+  abroad?: boolean; examName?: string; examTries?: number;
 }
 
 /**
@@ -316,6 +326,8 @@ export class Life {
   /** 관심 분야 점수. 쌓이기만 한다 */
   interests: Record<InterestKey, number> = { science: 0, words: 0, art: 0, sport: 0, tech: 0, care: 0, biz: 0, nature: 0 };
   major: string | null = null;
+  /** 대학원에서 고른 연구 분야 */
+  research: string | null = null;
   /** 고른 선택의 기록 */
   choiceLog: (TurningPoint & { auto: boolean })[] = [];
   /** 돈 관리 계획. cash 는 쓸 수 있는 돈 전체이고, 그 가운데 invest 만큼이 투자에 들어 있다 */
@@ -384,6 +396,16 @@ export class Life {
     const list = k ? this.titles(INTEREST_CERTS[k]) : [];
     return list.length ? this.r.pick(list) : this.year >= 1997 ? '컴퓨터활용능력' : '정보처리기능사';
   }
+  /** 갈림길에서 기록을 남긴다 */
+  note(text: string, kind: EntryKind = 'event') { this.log(text, kind); }
+  /** 갈림길에서 확률을 굴린다 */
+  roll(p: number) { return this.r.chance(p); }
+  /** 본격적으로 하고 있는 예체능 종목 */
+  talentInfo() {
+    const f = this.flags;
+    return f.talent ? TALENTS[f.talent][(f.talentIdx ?? 0) % TALENTS[f.talent].length] : null;
+  }
+  private degreeLabel() { return this.flags.degree === 'phd' ? ' · 박사' : this.flags.degree === 'master' ? ' · 석사' : ''; }
   /** 연봉을 p만큼 올린다 (이직·대학원 등) */
   raise(p: number) { if (this.job && this.job.base > 0) this.job.base *= 1 + p; }
   /**
@@ -511,11 +533,12 @@ export class Life {
   private runPathOption(o: PathOption) {
     for (const [k, v] of Object.entries(o.shape?.traits ?? {}) as [TraitKey, number][]) this.traits[k] = Math.max(-100, Math.min(100, this.traits[k] + v));
     for (const [k, v] of Object.entries(o.shape?.interests ?? {}) as [InterestKey, number][]) this.interests[k] += v;
-    const [, text, fx] = this.r.weighted(o.outcomes.map((x) => [x, x[0]] as [typeof x, number]))[0];
+    const [, text, fx, after] = this.r.weighted(o.outcomes.map((x) => [x, x[0]] as [typeof x, number]))[0];
     const mood = (fx.happiness ?? 0) + (fx.health ?? 0) + (fx.cash ?? 0) / 500;
     this.log(text, mood <= -3 ? 'bad' : mood >= 4 ? 'good' : 'event');
     // 학창 시절은 역량을 반만 반영한다 (진학률 보정)
     this.apply(this.age < 19 && fx.ability ? { ...fx, ability: fx.ability * 0.5 } : fx);
+    after?.(this);
     o.then?.(this);
   }
 
@@ -639,7 +662,7 @@ export class Life {
     this.career();
     this.familyYear();
     // 생애 갈림길(성향·관심 분야), 없으면 가끔 작은 갈림길. 그 밖에 작은 사건이 거의 해마다 하나, 가끔 둘.
-    if (!this.pending && this.age >= 7) this.pathChoice();
+    if (!this.pending && (this.age >= 7 || this.age === 1)) this.pathChoice();
     if (!this.pending && this.age >= 7 && this.r.chance(0.12)) this.randomDilemma();
     if (!this.pending && this.r.chance(0.85)) this.randomEvent();
     if (!this.pending && this.r.chance(0.3)) this.randomEvent();
@@ -696,7 +719,7 @@ export class Life {
       netWorth: this.independent ? Math.round(this.netWorth) : null,
       familyLabel: this.quintileInfo.label,
       job: this.job ? this.job.title : null,
-      edu: this.edu ? D.eduTiers[this.edu].label : null,
+      edu: this.edu ? D.eduTiers[this.edu].label + this.degreeLabel() : null,
       married: this.married, children: this.children.length, house: !!this.house,
       family: {
         parentsAlive: !this.flags.parentsGone,
@@ -802,14 +825,9 @@ export class Life {
         f.movedSeoul = true;
       }
     }
-    if (male && a === (f.militaryStart ?? (f.retake ? 21 : 20)) && !f.militaryDone) this.military();
-    if (male && !f.militaryDone && f.militaryEnd === a) {
-      this.log('전역했다.', 'milestone');
-      f.militaryDone = true;
-      // 일하다 입대한 사람은 전역 후 다시 일자리를 찾는다
-      if (!this.job && this.edu && (this.edu === 'elementary' || this.edu === 'middle') && f.jobSearchAge === undefined) f.jobSearchAge = a;
-    }
     if (f.gradAge === a && this.edu) this.log(`${eduName(this.edu)}을 졸업했다.`, 'milestone');
+    if (male && a === (f.militaryStart ?? (f.retake ? 21 : 20)) && !f.militaryDone && f.militaryEnd === undefined) this.military();
+    if (male && !f.militaryDone && f.militaryEnd === a) this.discharge();
     if (f.jobSearchAge === a) {
       f.jobSearchAge = undefined;
       this.jobSearch();
@@ -883,7 +901,8 @@ export class Life {
 
   private askHighSchool() {
     const voc = vocationalSchoolName(this.year);
-    this.ask('고등학교 3년을 어떻게 보낼까?', [
+    const talent = this.talentInfo();
+    const opts: Option[] = [
       {
         label: '입시에 모든 걸 건다', desc: '성적은 오르지만 지친다', auto: 3,
         run: () => { this.flags.allIn = true; this.apply({ health: -3, happiness: -4 }); this.log('인문계 고등학교에 입학했다. 목표는 오직 대학이었다.'.replace('인문계', this.year >= 2000 ? '일반' : '인문계'), 'milestone'); },
@@ -896,7 +915,21 @@ export class Life {
         label: `${voc}에서 기술을 배운다`, desc: '졸업 후 바로 취업을 노린다', auto: this.year < 2000 ? 3 : 1.5,
         run: () => { this.flags.vocational = true; this.apply({ happiness: 3 }); this.log(`${voc}에 입학해 기술을 배우기 시작했다.`, 'milestone'); },
       },
-    ]);
+    ];
+    if (talent) {
+      const art = this.flags.talent === 'art';
+      opts.push({
+        label: art ? '예술고에 간다' : '체육 특기생으로 진학한다', desc: `${talent.name}에 모든 걸 건다`, auto: 4,
+        run: () => {
+          this.flags.artsSchool = true;
+          this.flags.track = 'arts';
+          this.interests[art ? 'art' : 'sport'] += 3;
+          this.apply({ happiness: 3, health: art ? 0 : 2 });
+          this.log(art ? `예술고에 입학했다. 하루의 절반은 ${talent.name} 연습이었다.` : `체육 특기생으로 고등학교에 들어갔다. 수업보다 ${talent.name} 훈련이 먼저였다.`, 'milestone');
+        },
+      });
+    }
+    this.ask('고등학교 3년을 어떻게 보낼까?', opts);
   }
 
   // 시험 점수(대략 평균 56, 표준편차 18)와 상위 몇 %인지
@@ -991,31 +1024,107 @@ export class Life {
     }
   }
 
+  /** 병역 판정. 현역 판정을 받으면 어떻게 갈지 고른다 (육군·해병대·공군, 대학생은 졸업 뒤·ROTC) */
   private military() {
+    const f = this.flags;
+    if (f.militaryAsked) return this.enlist(f.officer ? 'officer' : 'army'); // 미뤄 둔 입대
     const roll = this.r.rand();
     const y = this.year;
     const altRate = y < 1993 ? 0.25 : D.military.alternativeRate;
     if (roll < D.military.exemptRate || this.stats.health < 35) {
       this.log('병역 판정 검사에서 면제 판정을 받았다.');
-      this.flags.militaryDone = true;
+      f.militaryDone = true;
       return;
     }
+    if (roll < D.military.exemptRate + altRate) return this.enlist('alt');
+    f.militaryAsked = true;
+    if (this.pending) return this.enlist('army');
+    const months = militaryMonths(y);
+    const studying = f.collegeStart !== undefined && f.gradAge !== undefined && this.age < f.gradAge;
+    const bold = 1 + Math.max(0, this.traits.bold) / 40;
+    const opts: Option[] = [
+      { label: '육군으로 입대한다', desc: `${months}개월`, auto: 6, run: () => this.enlist('army') },
+      { label: '해병대에 지원한다', desc: '훈련은 고되지만 자부심이 남는다', auto: 0.5 * bold, run: () => this.enlist('marine') },
+      { label: '공군에 지원한다', desc: `${months + 3}개월. 길지만 생활은 낫다고 한다`, auto: 0.7, run: () => this.enlist('air') },
+    ];
+    if (studying) {
+      opts.push({ label: '졸업한 뒤에 간다', desc: '학업을 먼저 마친다', auto: 0.8, run: () => { this.deferMilitary(); this.log('입영을 미루고 학교를 계속 다니기로 했다.'); } });
+      if (D.eduTiers[this.edu!].years >= 4 && y >= 1961) {
+        opts.push({
+          label: 'ROTC에 지원한다', desc: '졸업 뒤 장교로 28개월 복무한다', auto: 0.35 * bold,
+          run: () => { f.officer = true; this.deferMilitary(); this.apply({ ability: 1, relation: 2 }); this.log('학군단에 들어갔다. 방학마다 훈련을 받았다.'); },
+        });
+      }
+    }
+    this.log('병역 판정 검사에서 현역 판정을 받았다.');
+    this.ask('군대를 어떻게 갈까?', opts);
+  }
+
+  /** 입대를 졸업 뒤로 미룬다. 졸업이 복무 기간만큼 빨라지고, 일자리는 전역 뒤에 찾는다 */
+  private deferMilitary() {
+    const f = this.flags;
+    if (f.gradAge === undefined || f.collegeStart === undefined || !this.edu) return;
+    f.gradAge = f.collegeStart + D.eduTiers[this.edu].years;
+    f.militaryStart = f.gradAge;
+    f.jobSearchAge = f.gradAge + 3; // 입대할 때 실제 복무 기간으로 다시 맞춘다
+  }
+
+  private enlist(kind: 'army' | 'marine' | 'air' | 'alt' | 'officer') {
+    const f = this.flags;
+    const y = this.year;
+    const early = this.edu === 'elementary' || this.edu === 'middle';
     // 일하다 입대하면 일을 쉰다
-    if (this.job && this.job.type !== 'none' && (this.edu === 'elementary' || this.edu === 'middle')) {
+    if (this.job && this.job.type !== 'none' && early) {
       this.log('일을 그만두고 입대했다.');
       this.job = null;
     }
-    const months = militaryMonths(y);
-    if (roll < D.military.exemptRate + altRate) {
+    let months = militaryMonths(y);
+    if (kind === 'alt') {
       this.log(`보충역 판정을 받아 ${josa(alternativeServiceName(y), '으로/로')} 복무를 시작했다.`, 'milestone');
+    } else if (kind === 'officer') {
+      months = 28;
+      this.log(`소위로 임관했다. ${this.r.pick(MILITARY_BASES)}의 부대에서 소대장으로 ${months}개월을 복무해야 한다.`, 'milestone');
+      this.apply({ health: 2, ability: 2, happiness: -2, relation: 3 });
+    } else if (kind === 'marine') {
+      this.log(`해병대에 입대했다. 포항 훈련소에서 시작해 ${months}개월을 보내야 한다.`, 'milestone');
+      this.apply({ health: 4, happiness: -6, relation: 3 });
+      this.traits.bold = Math.min(100, this.traits.bold + 8);
+    } else if (kind === 'air') {
+      months += 3;
+      this.log(`공군에 입대했다. 비행단에서 ${months}개월을 보내야 한다.`, 'milestone');
+      this.apply({ health: 1, happiness: -2, ability: 1, relation: 1 });
     } else {
       this.log(`현역으로 입대했다. ${this.r.pick(MILITARY_BASES)}의 부대에서 ${months}개월을 보내야 한다.`, 'milestone');
       this.apply({ health: 2, happiness: -4, relation: 2 });
     }
     this.fact('military');
-    this.flags.militaryEnd = this.age + Math.ceil(months / 12);
+    const years = Math.ceil(months / 12);
+    f.militaryEnd = this.age + years;
+    // 복무 기간에 맞춰 졸업·구직 시기를 다시 잡는다 (공군·장교는 육군보다 길 수 있다)
+    if (f.gradAge !== undefined && f.collegeStart !== undefined && this.edu && this.age < f.gradAge) {
+      f.gradAge = f.collegeStart + D.eduTiers[this.edu].years + years;
+      f.jobSearchAge = f.gradAge;
+    } else if (f.jobSearchAge !== undefined) f.jobSearchAge = f.militaryEnd;
     // 일찍 일을 시작한 사람은 전역 뒤에 다시 구직
-    if (this.edu === 'elementary' || this.edu === 'middle') this.flags.jobSearchAge = undefined;
+    if (early) f.jobSearchAge = undefined;
+  }
+
+  private discharge() {
+    const f = this.flags;
+    f.militaryDone = true;
+    if (f.officer && !this.pending) {
+      f.jobSearchAge = undefined;
+      const pay = () => { this.becomeIndependent(); this.cash += 1500 * this.wage; };
+      this.log('의무 복무 기간이 끝나 갔다.');
+      this.ask('군에 남을까?', [
+        { label: '전역하고 사회로 나간다', desc: '취업 준비를 시작한다', auto: 6, run: () => { pay(); this.log('중위로 전역했다. 장교 월급을 모은 돈이 조금 있었다.', 'milestone'); this.jobSearch(); } },
+        { label: '장기 복무를 신청한다', desc: '직업 군인의 길', auto: 1.5, run: () => { pay(); this.log('장기 복무 심사를 통과했다.', 'good'); this.startJob('public', true, ['육군 장교']); } },
+      ]);
+      return;
+    }
+    this.log('전역했다.', 'milestone');
+    // 일하다 입대한 사람은 전역 후 다시 일자리를 찾는다
+    if (!this.job && this.edu && (this.edu === 'elementary' || this.edu === 'middle') && f.jobSearchAge === undefined) f.jobSearchAge = this.age;
   }
 
   private becomeIndependent() {
@@ -1031,7 +1140,8 @@ export class Life {
     if (!early) this.becomeIndependent();
     this.fact(this.year < 1990 ? 'farm' : 'jobMarket');
     if (early) return this.assignJob(false);
-    this.ask('취업 준비를 어떻게 할까?', [
+    const f = this.flags;
+    const opts: Option[] = [
       { label: '눈높이를 맞춰 바로 취업한다', desc: '지금 갈 수 있는 곳으로', auto: 7, run: () => this.assignJob(false) },
       {
         label: '1년 더 준비한다', desc: '공무원 시험이나 대기업 공채', auto: this.year < 1995 ? 1.5 : 3,
@@ -1044,7 +1154,155 @@ export class Life {
           this.job = { type: 'none', title: '취업 준비생', base: 0, since: this.age, main: false };
         },
       },
+    ];
+    const four = D.eduTiers[this.edu ?? 'highschool'].years >= 4;
+    const keen = 1 + Math.max(0, this.traits.diligent) / 40;
+    if (four && !f.degree) opts.push({ label: '대학원에 진학한다', desc: '석사 2년. 등록금이 든다', auto: (this.stats.ability >= 60 ? 0.7 : 0.3) * keen, run: () => this.askResearch() });
+    if (four && !f.examTries) opts.push({ label: '고시에 도전한다', desc: '몇 해를 걸어야 하고 붙는 사람은 적다', auto: this.stats.ability >= 65 ? 0.35 : 0.1, run: () => this.askExam() });
+    const talent = this.talentInfo();
+    if (talent && !f.proTried) opts.push({ label: `${josa(talent.pro, '으로/로')} 사는 길에 도전한다`, desc: '이 길로 먹고사는 사람은 드물다', auto: f.artsSchool ? 3 : 1.2, run: () => this.tryPro() });
+    this.ask('취업 준비를 어떻게 할까?', opts);
+  }
+
+  // ───────── 대학원·고시·예체능 (claude/paths/SKILL.md 의 '긴 루트') ─────────
+  private startStudy(kind: 'master' | 'phd' | 'exam', years: number, title: string, cost: number) {
+    const f = this.flags;
+    f.study = kind;
+    f.studyUntil = this.age + years;
+    this.job = { type: 'none', title, base: 0, since: this.age, main: false };
+    this.cash -= cost * this.wage;
+  }
+  private endStudy() { this.flags.study = undefined; this.flags.studyUntil = undefined; }
+
+  /** 대학원: 관심 분야 상위 셋에서 연구 분야를 하나씩 내놓는다 */
+  private askResearch() {
+    const opts: Option[] = this.topInterests(3).map((k) => {
+      const field = this.r.pick(this.titles(RESEARCH_FIELDS[k]));
+      return {
+        label: field, desc: `${INTERESTS[k]} 쪽`, auto: 1 + this.interests[k],
+        run: () => {
+          this.research = field;
+          this.interests[k] += 3;
+          this.log(`대학원에 들어가 ${josa(field, '을/를')} 연구하기 시작했다.`, 'milestone');
+          this.startStudy('master', 2, '석사 과정 대학원생', 1600);
+        },
+      };
+    });
+    this.ask('어떤 분야를 연구할까?', opts);
+  }
+
+  /** 공부가 끝나는 해 (career 가 부른다) */
+  private finishStudy() {
+    const f = this.flags;
+    if (f.study === 'exam') return this.finishExam();
+    if (f.study === 'master') {
+      f.degree = 'master';
+      this.apply({ ability: 4 });
+      this.log('석사 학위를 받았다. 논문 심사 날은 오래 기억에 남았다.', 'milestone');
+      const opts: Option[] = [
+        { label: '취업한다', desc: '석사 학위로 지원한다', auto: 6, run: () => { this.endStudy(); this.assignJob(true); this.raise(0.08); } },
+        {
+          label: '박사 과정에 진학한다', desc: '4년은 더 걸린다', auto: 1.5 * (1 + Math.max(0, this.traits.diligent) / 40),
+          run: () => { this.log('박사 과정에 들어갔다. 연구실이 집이 됐다.', 'milestone'); this.startStudy('phd', 4, '박사 과정 대학원생', 800); },
+        },
+      ];
+      if (this.stats.ability >= 62 || this.quintile >= 4) {
+        opts.push({
+          label: '유학을 떠난다', desc: '외국 대학 박사 과정. 5년쯤 걸린다', auto: 0.5 * (1 + Math.max(0, this.traits.bold) / 40),
+          run: () => { f.abroad = true; this.apply({ ability: 2, relation: -3 }); this.log('유학길에 올랐다. 공항에서 부모님이 오래 손을 흔드셨다.', 'milestone'); this.startStudy('phd', 5, '유학생 (박사 과정)', 1500); },
+        });
+      }
+      this.ask('석사를 마쳤다. 이제 어떻게 할까?', opts);
+      return;
+    }
+    f.degree = 'phd';
+    this.apply({ ability: 5, happiness: 4 });
+    this.log(`박사 학위를 받았다.${this.research ? ` ${this.research} 연구에 ${f.abroad ? '낯선 나라에서 ' : ''}여러 해를 쏟았다.` : ''}`, 'milestone');
+    if (f.abroad) this.log('짐을 싸서 한국으로 돌아왔다.');
+    const lab = this.research ? `${this.research} 연구원` : '책임 연구원';
+    const opts: Option[] = [
+      { label: '교수 임용에 도전한다', desc: '자리는 적고 지원자는 많다', auto: 3, run: () => { this.endStudy(); this.tryProfessor(); } },
+      { label: '기업 연구소에 간다', desc: '연봉이 가장 높다', auto: 4, run: () => { this.endStudy(); this.startJob('large', true, [lab]); this.raise(0.25); } },
+    ];
+    if (this.year >= 1966) opts.push({ label: '정부출연연구소에 간다', desc: '안정적으로 연구한다', auto: 3, run: () => { this.endStudy(); this.startJob('public', true, ['정부출연연구소 연구원']); this.raise(0.3); } });
+    this.ask('박사가 됐다. 어디로 갈까?', opts);
+  }
+
+  /** 교수 임용. 떨어지면 시간강사로 지내며 다시 기회를 기다린다 (갈림길 professor-again) */
+  tryProfessor() {
+    const lecturer = this.job?.title === '시간강사';
+    const p = Math.max(0.05, Math.min(0.6, 0.15 + (this.stats.ability - 60) / 150 + (this.flags.abroad ? 0.12 : 0) + (lecturer ? 0.08 : 0)));
+    if (this.r.chance(p)) {
+      const base = D.jobs.professional.startSalary * (0.8 + 0.2 * this.r.rand());
+      this.job = { type: 'professional', title: '대학교수', base, since: this.age, main: true };
+      this.lastWork = '대학교수';
+      this.apply({ happiness: 10 });
+      this.log(`대학교수로 임용됐다. 첫해 연봉은 지금 돈으로 약 ${won(base * this.wage)}.`, 'milestone');
+      return;
+    }
+    this.apply({ happiness: -5 });
+    if (lecturer) { this.log('이번에도 임용에서 떨어졌다. 강의를 계속했다.', 'bad'); return; }
+    this.log('임용에서 떨어졌다. 시간강사로 여러 학교를 돌며 강의했다.', 'bad');
+    this.job = { type: 'contract', title: '시간강사', base: 1900 * (0.9 + 0.3 * this.r.rand()), since: this.age, main: true };
+    this.lastWork = '시간강사';
+  }
+
+  private askExam() {
+    const list = EXAMS.filter((e) => (e.from ?? -Infinity) <= this.year && this.year <= (e.to ?? Infinity));
+    this.ask('어떤 시험을 준비할까?', list.map((e) => ({
+      label: e.label, desc: e.desc, auto: e.auto,
+      run: () => {
+        this.flags.examName = e.name;
+        this.flags.examTries = 1;
+        this.apply({ happiness: -3 });
+        this.log(e.startText, 'milestone');
+        this.startStudy('exam', e.years, e.title, e.cost);
+      },
+    })));
+  }
+
+  private finishExam() {
+    const f = this.flags;
+    const e = EXAMS.find((x) => x.name === f.examName) as Exam;
+    const tries = f.examTries ?? 1;
+    const p = Math.max(0.02, Math.min(0.75, e.pass * (1 + (this.stats.ability - 60) / 25) + 0.05 * (tries - 1)));
+    if (this.r.chance(p)) {
+      this.endStudy();
+      this.apply({ happiness: 12, ability: 3 });
+      this.log(`${e.name}에 합격했다. 합격자 명단에서 이름을 몇 번이나 다시 봤다.`, 'good');
+      this.startJob(e.type, true, e.titles);
+      if (e.type === 'public') this.raise(0.5);
+      return;
+    }
+    this.apply({ happiness: -7 });
+    this.log(`${e.name}에 떨어졌다.`, 'bad');
+    const quit = () => { this.endStudy(); this.log('수험서를 묶어 내놓고 일자리를 찾았다.'); this.assignJob(false); };
+    if (tries >= 3) return quit();
+    this.ask('다시 도전할까?', [
+      { label: '한 해 더 해 본다', desc: '이번이 마지막이라고 다짐한다', auto: 2, run: () => { f.examTries = tries + 1; f.studyUntil = this.age + 1; this.cash -= 800 * this.wage; this.log('다시 독서실 자리를 끊었다.'); } },
+      { label: '접고 취업한다', auto: 3, run: quit },
     ]);
+  }
+
+  /** 예체능으로 먹고사는 길. 재능·대회 성적에 따라 되고, 안 되면 가르치는 일을 한다 */
+  private tryPro() {
+    const f = this.flags;
+    const t = this.talentInfo()!;
+    f.proTried = true;
+    const depth = this.interests[f.talent!];
+    const p = Math.max(0.05, Math.min(0.55, 0.1 + (depth - 8) * 0.02 + (f.talentWins ?? 0) * 0.1 + (f.artsSchool ? 0.08 : 0)));
+    if (this.r.chance(p)) {
+      const star = this.r.chance(0.2);
+      const base = (star ? 9000 : 4200) * (0.8 + 0.5 * this.r.rand());
+      this.job = { type: 'professional', title: t.pro, base, since: this.age, main: true };
+      this.lastWork = t.pro;
+      this.apply({ happiness: 10 });
+      this.log(`${josa(t.pro, '이/가')} 됐다.${star ? ' 이름이 조금씩 알려지기 시작했다.' : ''} 첫해 수입은 지금 돈으로 약 ${won(base * this.wage)}.`, 'milestone');
+      return;
+    }
+    this.apply({ happiness: -6 });
+    this.log(f.talent === 'sport' ? '입단 테스트에서 끝내 이름이 불리지 않았다.' : '오디션과 공모전에 번번이 떨어졌다.', 'bad');
+    this.startJob('contract', true, [t.teach]);
   }
 
   private jobWeights(prepared: boolean): [JobType, number][] {
@@ -1359,6 +1617,11 @@ export class Life {
     }
 
     if (j.type === 'none') {
+      if (f.studyUntil !== undefined) {
+        // 다른 선택이 걸린 해에는 한 해 늦어진다
+        if (f.studyUntil <= a) { if (this.pending) f.studyUntil = a + 1; else this.finishStudy(); }
+        return;
+      }
       if (f.prepareUntil === a) { f.prepareUntil = undefined; this.assignJob(true); return; }
       if ((f.prepareUntil ?? 0) > a || f.retired) return;
       if (f.homemaker) {
@@ -1680,7 +1943,7 @@ export class Life {
     s.happiness += (60 - s.happiness) * 0.12;
     s.health += (66 - s.health) * 0.06;
     if (this.flags.exercise) s.health = clamp(s.health + 0.5);
-    if (this.job && this.job.type === 'none' && !this.flags.retired && !this.flags.homemaker && this.age >= 22) s.happiness = clamp(s.happiness - 2);
+    if (this.job && this.job.type === 'none' && !this.flags.retired && !this.flags.homemaker && this.flags.studyUntil === undefined && this.age >= 22) s.happiness = clamp(s.happiness - 2);
     s.relation += (55 - s.relation) * 0.03;
   }
 
@@ -1692,7 +1955,8 @@ export class Life {
     if (this.age >= 7) {
       lines.push(this.lastWork ? `어릴 적 꿈은 ${this.dream}, 마지막 일은 ${this.lastWork}.` : `어릴 적 꿈은 ${josa(this.dream, '이었다/였다')}.`);
     }
-    if (this.edu) lines.push(`최종 학력은 ${eduName(this.edu)}.`);
+    if (this.edu) lines.push(`최종 학력은 ${eduName(this.edu)}${this.degreeLabel()}.`);
+    if (this.research) lines.push(`대학원에서 ${josa(this.research, '을/를')} 연구했다.`);
     if (this.spouse) {
       const kids = this.children.length ? `자녀 ${this.children.length}명을 두었다.` : '아이는 없었다.';
       lines.push(`${josa(this.spouse.name, '과/와')} 결혼해 ${kids}`);
@@ -1738,7 +2002,7 @@ export class Life {
       cause: this.deathCause,
       birthYear: this.birthYear,
       deathYear: this.year,
-      edu: this.edu ? D.eduTiers[this.edu].label : null,
+      edu: this.edu ? D.eduTiers[this.edu].label + this.degreeLabel() : null,
       lastWork: this.lastWork,
       netWorth: this.independent ? Math.round(this.netWorth) : null,
       netWorthText: this.independent ? won(this.netWorth) : null,

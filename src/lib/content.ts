@@ -99,6 +99,53 @@ export const MAJORS: Record<InterestKey, string[]> = {
   nature: ['농학과', '생명과학과', '환경공학과'],
 };
 
+/** 대학원 연구 분야 (관심 분야마다 연도 제한 없는 것이 하나 이상 있어야 한다) */
+export const RESEARCH_FIELDS: Record<InterestKey, Dated[]> = {
+  science: ['고체물리', '유기화학', '수학', ['신소재', 1985], ['뇌과학', 2000]],
+  words: ['한국 근현대사', '국어학', '언론학', '철학'],
+  art: ['미술사', '음악 이론', '디자인 이론', ['영상 미학', 1995]],
+  sport: ['운동생리학', '스포츠 심리학'],
+  tech: ['통신 공학', '제어 공학', ['반도체', 1980], ['컴퓨터 구조', 1985], ['로봇 공학', 1995], ['인공지능', 2012]],
+  care: ['교육학', '사회복지 정책', '간호학', '아동 발달'],
+  biz: ['경제학', '경영 전략', '재무·금융'],
+  nature: ['육종학', '생태학', '수의학', ['기후 변화', 2000]],
+};
+/** 예체능 종목: name 종목 · pro 그 길로 성공했을 때의 직업 · teach 가르치는 일 */
+export interface Talent { name: string; pro: string; teach: string }
+export const TALENTS: Record<'art' | 'sport', Talent[]> = {
+  art: [
+    { name: '피아노', pro: '피아니스트', teach: '피아노 학원 강사' },
+    { name: '그림', pro: '화가', teach: '미술 학원 강사' },
+    { name: '바이올린', pro: '바이올리니스트', teach: '음악 학원 강사' },
+    { name: '무용', pro: '무용수', teach: '무용 학원 강사' },
+    { name: '노래', pro: '가수', teach: '보컬 학원 강사' },
+  ],
+  sport: [
+    { name: '축구', pro: '축구 선수', teach: '축구 교실 코치' },
+    { name: '야구', pro: '야구 선수', teach: '야구 교실 코치' },
+    { name: '수영', pro: '수영 선수', teach: '수영 강사' },
+    { name: '태권도', pro: '태권도 선수', teach: '태권도장 사범' },
+    { name: '육상', pro: '육상 선수', teach: '체육관 트레이너' },
+    { name: '배구', pro: '배구 선수', teach: '방과 후 체육 강사' },
+  ],
+};
+export const SINGING = 4; // TALENTS.art 에서 '노래'의 자리 (기획사 연습생)
+/**
+ * 고시·전문직 시험. pass 는 역량 60인 사람의 합격 확률 (추정: 응시자 대비 합격률을 바탕으로 한 모형값).
+ * 사법시험은 2017년에 폐지됐고 법학전문대학원은 2009년에 문을 열었다. (공식)
+ */
+export interface Exam {
+  name: string; label: string; desc: string; startText: string; title: string;
+  from?: number; to?: number; years: number; cost: number; pass: number; auto: number;
+  type: 'professional' | 'public'; titles: string[];
+}
+export const EXAMS: Exam[] = [
+  { name: '사법시험', label: '사법시험', desc: '2년쯤 걸린다. 합격하면 법조인', startText: '고시원에 들어가 사법시험 공부를 시작했다.', title: '고시생', to: 2017, years: 2, cost: 1500, pass: 0.07, auto: 2, type: 'professional', titles: ['변호사', '판사', '검사'] },
+  { name: '변호사시험', label: '로스쿨에 간다', desc: '3년. 학비가 많이 든다', startText: '법학전문대학원에 입학했다.', title: '로스쿨 학생', from: 2009, years: 3, cost: 4500, pass: 0.5, auto: 2, type: 'professional', titles: ['변호사'] },
+  { name: '행정고시', label: '행정고시', desc: '2년쯤 걸린다. 합격하면 5급 공무원', startText: '고시원에 들어가 행정고시 공부를 시작했다.', title: '고시생', years: 2, cost: 1500, pass: 0.07, auto: 2, type: 'public', titles: ['5급 사무관'] },
+  { name: '공인회계사 시험', label: '공인회계사 시험', desc: '2년쯤 걸린다', startText: '독서실에 자리를 잡고 공인회계사 시험공부를 시작했다.', title: '수험생', years: 2, cost: 1200, pass: 0.14, auto: 1.5, type: 'professional', titles: ['회계사'] },
+];
+
 // 단계별 무작위 사건. 같은 문장은 한 생에 한 번만 나온다.
 // 해마다 일어나는 사건과 작은 갈림길은 events.ts 에 있다.
 export { DILEMMAS, FAMILY_FORTUNE, LIFE_EVENTS, RANDOM_EVENTS, type Dilemma, type RandomEvent } from './events';

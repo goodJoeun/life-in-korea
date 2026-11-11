@@ -8,11 +8,12 @@
  * 선택지: shape 고르면 바뀌는 성향·관심 · lean 성향에 따라 '운에 맡기기' 가중치가 바뀌는 방향 · then 엔진 상태 바꾸기
  * 문장은 과거형 일기체. 시대가 있는 문장은 eraText 나 from/to 로. 수치 효과는 작게 (통계 보정).
  */
-import { MAJORS, type Effect, type InterestKey, type TraitKey } from './content';
+import { MAJORS, SINGING, TALENTS, type Effect, type InterestKey, type TraitKey } from './content';
 import type { Life } from './engine';
 import { josa } from './text';
 
-export type Outcome = [number, string, Effect];
+/** [가중치, 문장, 수치 변화, 그 결과가 나왔을 때만 하는 후속 처리] */
+export type Outcome = [number, string, Effect, ((l: Life) => void)?];
 export interface PathOption {
   label: string;
   desc?: string;
@@ -50,8 +51,40 @@ const inCollege = (l: Life) => l.flags.collegeStart !== undefined && l.flags.gra
 const childAged = (min: number, max: number) => (l: Life) => l.children.some((c) => l.age - c.bornAge >= min && l.age - c.bornAge <= max);
 const fourYear = (l: Life) => ['local4', 'capital4', 'top4'].includes(l.edu ?? '');
 
+const serving = (l: Life) => l.flags.militaryEnd !== undefined && !l.flags.militaryDone;
+/** 재능이 보이는 쪽과 그 종목 (종목은 씨앗값으로 정해 한 생 안에서 늘 같다) */
+const giftKind = (l: Life): 'art' | 'sport' => (l.interests.art >= l.interests.sport ? 'art' : 'sport');
+const giftIdx = (l: Life, kind: 'art' | 'sport') => l.seed % (kind === 'art' ? SINGING : TALENTS.sport.length); // 노래는 연습생 길로만
+const win = (l: Life) => { l.flags.talentWins = (l.flags.talentWins ?? 0) + 1; };
+
 // ───────── 갈림길 ─────────
 export const PATHS: PathChoice[] = [
+  // ── 돌잡이 ──
+  {
+    id: 'doljabi', ages: [1, 1], chance: 1,
+    prompt: '돌잔치 날, 돌상 앞에 앉았다. 무엇을 잡을까?',
+    options: (l) => {
+      const y = l.year;
+      const cheer = (thing: string, wish: string): Outcome[] => [[1, `돌상에서 ${josa(thing, '을/를')} 잡았다. 어른들이 ${wish} 웃었다.`, { happiness: 1 }]];
+      const opts: PathOption[] = [
+        { label: '실', desc: '오래 산다고 한다', auto: 2, outcomes: [[1, '돌상에서 실을 잡았다. 어른들이 오래 살겠다며 웃었다.', { health: 2 }]] },
+        { label: '돈', desc: '부자가 된다고 한다', auto: 2, shape: { interests: { biz: 2 }, traits: { thrift: 3 } }, outcomes: cheer('돈', '부자가 되겠다며') },
+        { label: y < 1990 ? '붓' : '연필', desc: '공부를 잘한다고 한다', auto: 2, shape: { interests: { words: 2, science: 1 }, traits: { diligent: 3 } }, outcomes: cheer(y < 1990 ? '붓' : '연필', '공부를 잘하겠다며') },
+      ];
+      if (y < 2000) opts.push({ label: '쌀', desc: '먹을 복이 있다고 한다', auto: 2, shape: { interests: { nature: 2 } }, outcomes: cheer('쌀', '평생 굶지는 않겠다며') });
+      if (y < 1990) opts.push(l.sex === 'M'
+        ? { label: '활', desc: '씩씩하게 자란다고 한다', auto: 1.5, shape: { interests: { sport: 2 }, traits: { bold: 3 } }, outcomes: cheer('활', '장군감이라며') }
+        : { label: '바늘과 실패', desc: '손재주가 좋다고 한다', auto: 1.5, shape: { interests: { art: 2 } }, outcomes: cheer('바늘과 실패', '손재주가 좋겠다며') });
+      if (y >= 1990) opts.push({ label: '판사봉', desc: '법조인이 된다고 한다', auto: 1.5, shape: { interests: { words: 2 }, traits: { diligent: 2 } }, outcomes: cheer('판사봉', '판사가 되겠다며') });
+      if (y >= 1995) opts.push({ label: '청진기', desc: '의사가 된다고 한다', auto: 1.5, shape: { interests: { care: 2, science: 1 } }, outcomes: cheer('청진기', '의사가 되겠다며') });
+      if (y >= 2000) {
+        opts.push({ label: '마이크', desc: '무대에 선다고 한다', auto: 1.5, shape: { interests: { art: 2 }, traits: { social: 3 } }, outcomes: cheer('마이크', '가수가 되겠다며') });
+        opts.push({ label: '공', desc: '운동을 잘한다고 한다', auto: 1.5, shape: { interests: { sport: 2 } }, outcomes: cheer('공', '운동선수가 되겠다며') });
+        opts.push({ label: '마우스', desc: '컴퓨터를 잘 다룬다고 한다', auto: 1.5, shape: { interests: { tech: 2 } }, outcomes: cheer('마우스', '컴퓨터 박사가 되겠다며') });
+      }
+      return opts;
+    },
+  },
   // ── 어린 시절: 관심 분야의 씨앗 ──
   {
     id: 'school-love', ages: [8, 8], chance: 1, when: inSchool,
@@ -82,8 +115,60 @@ export const PATHS: PathChoice[] = [
       return opts;
     },
   },
+  // ── 예체능 재능: 본격적으로 하면 예술고·특기생 진학과 그 길의 직업으로 이어진다 ──
   {
-    id: 'club', ages: [14, 14], chance: 0.85, when: inSchool,
+    id: 'talent', ages: [11, 11], chance: 0.7, when: (l) => inSchool(l) && Math.max(l.interests.art, l.interests.sport) >= 6,
+    prompt: (l) => {
+      const kind = giftKind(l);
+      const t = TALENTS[kind][giftIdx(l, kind)];
+      return kind === 'art' ? `${t.name} 선생님이 재능이 보인다며 본격적으로 시켜 보라고 했다.` : `체육 선생님이 ${t.name}부에 들어오라고 권했다.`;
+    },
+    options: (l) => {
+      const kind = giftKind(l);
+      const idx = giftIdx(l, kind);
+      const t = TALENTS[kind][idx];
+      const art = kind === 'art';
+      return [
+        {
+          label: `${josa(t.name, '을/를')} 본격적으로 한다`, desc: art ? '레슨비가 만만치 않다' : '수업보다 훈련이 먼저다',
+          auto: art && l.quintile <= 2 ? 0.7 : 1.5, lean: { bold: 1, [kind]: 1 }, shape: { interests: { [kind]: 5 }, traits: { diligent: 5, bold: 5 } },
+          outcomes: art
+            ? [[1, `학교가 끝나면 날마다 ${t.name} 연습을 했다. 손끝에 굳은살이 박였다.`, { happiness: 2, ability: -1 }]]
+            : [[1, `${t.name}부에 들어갔다. 새벽 훈련으로 하루를 시작했다.`, { health: 3, ability: -2 }]],
+          then: (x) => { x.flags.talent = kind; x.flags.talentIdx = idx; },
+        },
+        { label: '취미로만 한다', desc: '공부와 같이 한다', auto: 3, lean: { bold: -1 }, shape: { interests: { [kind]: 1 } }, outcomes: [[1, `${josa(t.name, '은/는')} 좋아하는 만큼만 하기로 했다.`, { happiness: 1 }]] },
+      ];
+    },
+  },
+  {
+    id: 'talent-contest', ages: [13, 15], chance: 0.7, when: (l) => inSchool(l) && !!l.flags.talent,
+    prompt: (l) => (l.flags.talent === 'art' ? '전국 규모의 콩쿠르와 실기 대회 공고가 붙었다.' : '전국 대회 출전 명단을 정하는 날이 왔다.'),
+    options: (l) => {
+      const t = l.talentInfo()!;
+      return [
+        {
+          label: '나가서 겨뤄 본다', auto: 3, lean: { bold: 1 }, shape: { traits: { bold: 5 } },
+          outcomes: [
+            [1, `${t.name} 전국 대회에서 입상했다. 이 길로 가도 되겠다는 생각이 들었다.`, { happiness: 6 }, win],
+            [2, '예선에서 떨어졌다. 잘하는 아이가 세상에 그렇게 많은 줄 몰랐다.', { happiness: -3 }],
+          ],
+        },
+        { label: '그만두고 공부로 돌아간다', desc: '이 길은 여기까지', auto: 1, lean: { bold: -1 }, outcomes: [[1, `${josa(t.name, '을/를')} 그만뒀다. 한동안 허전했다.`, { happiness: -2, ability: 1 }]], then: (x) => { x.flags.talent = undefined; } },
+      ];
+    },
+  },
+  {
+    id: 'class-president', ages: [11, 12], chance: 0.5, when: inSchool,
+    prompt: '반장 선거가 열렸다.',
+    options: () => [
+      { label: '후보로 나간다', auto: 1.5, lean: { bold: 1, social: 1 }, shape: { traits: { bold: 6, social: 6 } }, outcomes: [[1, '반장이 됐다. 차렷, 경례를 외치는 목소리가 떨렸다.', { relation: 4, happiness: 3 }], [1.5, '세 표를 받았다. 그중 한 표는 내가 찍은 것이었다.', { happiness: -2 }]] },
+      { label: '친한 친구를 추천한다', auto: 2, lean: { social: 1 }, shape: { traits: { social: 3 } }, outcomes: [[1, '추천한 친구가 반장이 됐다. 괜히 내가 뿌듯했다.', { relation: 2 }]] },
+      { label: '조용히 지켜본다', auto: 2, lean: { social: -1 }, outcomes: [[1, '누가 되든 상관없다고 생각했다.', {}]] },
+    ],
+  },
+  {
+    id: 'club', ages: [13, 14], chance: 0.85, when: inSchool,
     prompt: '중학교 동아리를 골라야 했다.',
     options: (l) => {
       const opts: PathOption[] = [
@@ -98,6 +183,22 @@ export const PATHS: PathChoice[] = [
       if (l.year >= 1988) opts.push({ label: '컴퓨터반', auto: 2, lean: { tech: 1 }, shape: { interests: { tech: 3 } }, outcomes: [[1, l.year < 2000 ? '베이직으로 처음 프로그램을 짜 봤다.' : l.year < 2015 ? '홈페이지를 직접 만들어 친구들에게 자랑했다.' : '친구들과 앱을 만들어 대회에 나갔다.', { ability: 2, happiness: 2 }]] });
       return opts;
     },
+  },
+  {
+    id: 'school-date', ages: [14, 15], chance: 0.6, when: inSchool,
+    prompt: (l) => (l.year < 1990 ? '등굣길 버스에서 자꾸 마주치는 아이에게 마음이 갔다.' : '같은 반에 자꾸 눈이 가는 아이가 생겼다.'),
+    options: () => [
+      {
+        label: '용기를 내 고백한다', auto: 1.5, lean: { bold: 1 }, shape: { traits: { bold: 8, social: 4 } },
+        outcomes: [
+          [2, '고백이 받아들여졌다. 몰래 쪽지를 주고받으며 사귀었다. 성적은 조금 떨어졌다.', { happiness: 5, relation: 3, ability: -2 }],
+          [1, '사귀다가 석 달 만에 헤어졌다. 첫 이별이었다.', { happiness: -1, relation: 1 }],
+          [1.5, '고백은 받아들여지지 않았다. 한동안 밤마다 이불을 걷어찼다.', { happiness: -3 }],
+        ],
+      },
+      { label: '편지만 쓰고 부치지 않는다', auto: 2, lean: { social: -1 }, outcomes: [[1, '끝내 전하지 못한 편지는 서랍 속에 남았다.', { happiness: -1 }]] },
+      { label: '공부가 먼저라고 마음을 접는다', auto: 2, lean: { diligent: 1 }, shape: { traits: { diligent: 6 } }, outcomes: [[1, '마음을 접고 문제집을 폈다. 글자가 눈에 잘 들어오지 않았다.', { ability: 1, happiness: -1 }]] },
+    ],
   },
   {
     id: 'dream-talk', ages: [15, 15], chance: 0.7, when: (l) => inSchool(l) && !!l.mainInterest(),
@@ -117,6 +218,21 @@ export const PATHS: PathChoice[] = [
     options: () => [
       { label: '따라간다', auto: 2, lean: { bold: 1, social: 1 }, shape: { traits: { bold: 8, diligent: -8, social: 4 } }, outcomes: [[2, '그날 처음으로 담을 넘었다. 생각보다 짜릿했다.', { happiness: 3, relation: 2 }], [1, '걸려서 반성문을 썼다.', { happiness: -2 }]] },
       { label: '공부해야 한다며 거절한다', auto: 3, lean: { diligent: 1 }, shape: { traits: { diligent: 8, bold: -3 } }, outcomes: [[1, '혼자 자습실에 남았다. 조금 외로웠다.', { ability: 1, relation: -1 }]] },
+    ],
+  },
+  {
+    id: 'audition', ages: [14, 18], chance: 0.25, from: 1998, when: (l) => inSchool(l) && l.interests.art >= 6 && !l.flags.talent,
+    prompt: '길에서 연예 기획사 명함을 받았다.',
+    options: () => [
+      {
+        label: '연습생이 된다', desc: '학교가 끝나면 연습실로 간다', auto: 1, lean: { bold: 1, art: 1 }, shape: { interests: { art: 4 }, traits: { bold: 8 } },
+        outcomes: [
+          [1, '연습생이 됐다. 막차 시간까지 춤과 노래를 연습했다.', { happiness: 2, ability: -2 }, win],
+          [1, '연습생이 됐다. 월말 평가 날마다 잠을 설쳤다.', { happiness: -1, ability: -2 }],
+        ],
+        then: (x) => { x.flags.talent = 'art'; x.flags.talentIdx = SINGING; },
+      },
+      { label: '명함만 간직한다', auto: 3, lean: { bold: -1 }, outcomes: [[1, '명함은 지갑 속에 오래 들어 있었다.', {}]] },
     ],
   },
   {
@@ -162,6 +278,20 @@ export const PATHS: PathChoice[] = [
     },
   },
   {
+    id: 'campus-date', ages: [20, 27], chance: 0.35, when: (l) => !l.married && l.flags.dating === undefined && !serving(l),
+    prompt: (l) => (l.year < 1995 ? '친구가 미팅에 같이 나가자고 했다.' : '친구가 소개팅을 해 주겠다고 했다.'),
+    options: () => [
+      {
+        label: '나간다', auto: 3, lean: { social: 1 }, shape: { traits: { social: 5 } },
+        outcomes: [
+          [1.5, '그날 만난 사람과 몇 번 더 만났고, 사귀게 됐다.', { happiness: 5, relation: 2 }, (x) => { x.flags.dating = x.age; }],
+          [1, '어색한 침묵만 흐르다 돌아왔다.', { happiness: -1 }],
+        ],
+      },
+      { label: '됐다고 한다', auto: 2, lean: { social: -1 }, outcomes: [[1, '연애보다 혼자 보내는 저녁이 편했다.', {}]] },
+    ],
+  },
+  {
     id: 'cert', ages: [23, 34], chance: 0.25, when: working,
     prompt: '퇴근 뒤에 자격증 공부를 해 볼까?',
     options: (l) => [
@@ -188,12 +318,32 @@ export const PATHS: PathChoice[] = [
     ],
   },
   {
-    id: 'grad-school', ages: [24, 36], chance: 0.15, when: (l) => fourYear(l) && l.trait('diligent') >= 10 && Math.max(l.interests.science, l.interests.words, l.interests.tech) >= 6,
-    prompt: '대학원에 가서 공부를 더 해 볼까?',
+    id: 'grad-school', ages: [26, 40], chance: 0.15, when: (l) => working(l) && fourYear(l) && !l.flags.degree && l.trait('diligent') >= 10,
+    prompt: '일하면서 야간 대학원에 다녀 볼까?',
     options: () => [
-      { label: '대학원에 간다', desc: '2년 동안 학비와 시간이 든다', auto: 1, lean: { diligent: 1 }, shape: { traits: { diligent: 6 } }, outcomes: [[1, '석사 학위를 받았다.', { ability: 5, cash: -2500, happiness: -1 }]], then: (x) => x.raise(0.08) },
+      { label: '다닌다', desc: '2년 동안 퇴근 뒤와 주말이 없다', auto: 1, lean: { diligent: 1 }, shape: { traits: { diligent: 6 } }, outcomes: [[1, '퇴근 뒤 야간 대학원을 다녀 석사 학위를 받았다.', { ability: 4, cash: -2000, happiness: -1, health: -1 }]], then: (x) => { x.flags.degree = 'master'; x.raise(0.08); } },
       { label: '일하면서 배운다', auto: 3, outcomes: [[1, '현장에서 배우는 게 더 많다고 생각했다.', { ability: 1 }]] },
     ],
+  },
+  {
+    id: 'professor-again', ages: [30, 46], chance: 0.6, when: (l) => l.job?.title === '시간강사',
+    prompt: '교수 임용 공고가 났다.',
+    options: () => [
+      { label: '다시 지원한다', auto: 3, lean: { diligent: 1 }, outcomes: [[1, '밤을 새워 연구 계획서를 고쳐 썼다.', {}]], then: (x) => x.tryProfessor() },
+      { label: '학교를 떠나 기업으로 간다', desc: '강의실 대신 연구소', auto: 2, lean: { bold: 1 }, outcomes: [[1, '마지막 강의를 마치고 연구실 짐을 뺐다.', { happiness: -1 }]], then: (x) => { x.beginJob('large', true, [x.research ? `${x.research} 연구원` : '책임 연구원']); } },
+    ],
+  },
+  {
+    id: 'athlete-retire', ages: [31, 37], chance: 1, when: (l) => l.flags.talent === 'sport' && !!l.job && l.job.title === l.talentInfo()?.pro,
+    prompt: '몸이 예전 같지 않았다. 선수 생활을 정리할 때가 왔다.',
+    options: (l) => {
+      const t = l.talentInfo()!;
+      return [
+        { label: '지도자의 길을 걷는다', auto: 3, lean: { social: 1 }, outcomes: [[1, '은퇴식에서 후배들이 헹가래를 쳐 주었다.', { happiness: 2 }]], then: (x) => x.beginJob('public', true, [`${t.name}부 감독`, '체육 교사']) },
+        { label: '가게를 차린다', desc: '모아 둔 돈 약 5천만 원', auto: 2, lean: { biz: 1, bold: 1 }, outcomes: [[1, '유니폼을 벗고 앞치마를 둘렀다.', { cash: -5000 }]], then: (x) => x.beginJob('self', true) },
+        { label: '평범한 직장인이 된다', auto: 2, lean: { bold: -1 }, outcomes: [[1, '처음으로 이력서라는 것을 써 봤다.', { happiness: -2 }]], then: (x) => x.beginJob('sme', true) },
+      ];
+    },
   },
   {
     id: 'transfer', ages: [30, 50], chance: 0.1, when: (l) => !!l.job && ['large', 'public'].includes(l.job.type),

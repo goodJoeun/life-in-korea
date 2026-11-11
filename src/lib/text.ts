@@ -6,6 +6,8 @@ const DIGIT_JONG: Record<string, number> = { '0': 21, '1': 8, '2': 0, '3': 16, '
 function lastJong(word: string): number {
   const ch = word[word.length - 1];
   if (ch in DIGIT_JONG) return DIGIT_JONG[ch];
+  // 알파벳으로 끝나면 글자 이름의 받침 (L 엘·R 알은 ㄹ, M 엠은 ㅁ, N 엔은 ㄴ, 나머지는 받침 없음: CEO 오)
+  if (/[A-Za-z]/.test(ch)) return ({ L: 8, R: 8, M: 16, N: 4 } as Record<string, number>)[ch.toUpperCase()] ?? 0;
   const c = word.charCodeAt(word.length - 1);
   return c >= 0xac00 && c <= 0xd7a3 ? (c - 0xac00) % 28 : -1; // -1: 한글이 아님
 }
